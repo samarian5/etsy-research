@@ -58,3 +58,27 @@ reported as `stopped_reason` in `run.json` and handled by the chain (ADR 0005).
 - **Budget and stop conditions enforced in code**, not by cancelling the job.
 - **The chain stops on a hard failure** — no retry storms against a wall.
 - Artifacts retained 14 days.
+
+## Repository secret (required)
+
+The repo is public so Actions minutes are free, so results travel sealed. Set the
+key once, on the runner and locally:
+
+```bash
+# 1. local key (never printed, never committed)
+openssl rand -hex 32 >> .env          # as ETSY_ARTIFACT_KEY=...
+chmod 600 .env
+
+# 2. same value as a repository secret
+#    Settings -> Secrets and variables -> Actions -> New repository secret
+#    name: ETSY_ARTIFACT_KEY
+```
+
+A run started without that secret fails immediately at `Open the queue` rather than
+uploading anything readable.
+
+## What is public now
+
+Code, workflow, tests and one captured Etsy page used as a test fixture. Not the
+database, not the dashboard, not the keywords (sealed in the dispatch input, hashed in
+logs), not the results (sealed tarball per run, 3-day retention).
