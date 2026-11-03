@@ -836,6 +836,7 @@ class Crawl:
             "occurrences": self.occurrences,
             "unique_listings": len(self.seen),
             "challenges": self.challenges,
+            "egress_ip": os.environ.get("EGRESS_IP") or None,
             "requests_used": self.args.max_requests - self.budget_left,
             "budget": self.args.max_requests,
         }
