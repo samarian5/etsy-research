@@ -1,0 +1,6 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+jinja2>=3.1
+beautifulsoup4>=4.12
+python-multipart>=0.0.9
+# crawler deps live in requirements-crawler.txt (installed on the Actions runner only)
