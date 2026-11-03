@@ -33,7 +33,12 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"
       PROFILE_DIR: ${{ github.workspace }}/.etsy-profile
-      QUEUE: ${{ inputs.queue }}
+      # This repository is public (free unlimited Actions minutes), so the queue —
+      # which names the keywords being researched — arrives sealed and the results
+      # leave sealed. Both use ETSY_ARTIFACT_KEY, which never appears in a log.
+      QUEUE_IN: ${{ inputs.queue }}
+      ETSY_ARTIFACT_KEY: ${{ secrets.ETSY_ARTIFACT_KEY }}
+      REDACT_KEYWORDS: "1"    # public repo: logs show kw-<hash>, not the keyword
       FAST: ${{ inputs.fast }}
       PROFILE_MODE: ${{ inputs.profile }}
       COOLDOWN_SECONDS: "300"   # breathe between chunks: a flagged IP needs the gap
@@ -41,6 +46,25 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Open the queue
+        run: |
+          if [ -z "${ETSY_ARTIFACT_KEY}" ]; then
+            echo "::error::ETSY_ARTIFACT_KEY secret is missing — refusing to run unsealed"
+            exit 1
+          fi
+          python - <<'EOF'
+          import os, json, sys
+          sys.path.insert(0, "crawler")
+          import artifact_crypt as ac
+          raw = os.environ.get("QUEUE_IN") or ""
+          queue = ac.unseal(raw) if ac.is_sealed(raw) else raw
+          json.loads(queue)  # fail loudly on a corrupt payload
+          with open(os.environ["GITHUB_ENV"], "a") as fh:
+              fh.write("QUEUE=%s\n" % queue.replace("\n", " "))
+          print("queue opened: %d item(s), %s" % (
+              len(json.loads(queue).get("items") or []), "sealed" if ac.is_sealed(raw) else "plaintext"))
+          EOF
 
       - uses: actions/setup-python@v5
         with:
@@ -127,20 +151,33 @@ jobs:
           path: ${{ env.PROFILE_DIR }}
           key: etsy-profile-v1-${{ github.run_id }}
 
-      - name: Upload results
+      - name: Seal the results
+        if: always()
+        run: |
+          python - <<'EOF'
+          import os, sys, tarfile, hashlib
+          sys.path.insert(0, "crawler")
+          import artifact_crypt as ac
+          if not os.path.isdir("out"):
+              print("no out/ directory — nothing to seal")
+              raise SystemExit(0)
+          with tarfile.open("out.tar.gz", "w:gz") as tf:
+              tf.add("out", arcname="")
+          before = os.path.getsize("out.tar.gz")
+          ac.seal_file("out.tar.gz", "out.tar.gz.enc")
+          os.remove("out.tar.gz")
+          print("sealed artifact: %d bytes plaintext -> %d bytes ciphertext"
+                % (before, os.path.getsize("out.tar.gz.enc")))
+          EOF
+
+      - name: Upload results (encrypted)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: etsy-run-${{ github.run_id }}
-          retention-days: 14
+          retention-days: 3          # public repo: keep the window short
           if-no-files-found: warn
-          path: |
-            out/results.jsonl
-            out/run.json
-            out/next_queue.json
-            out/chain_complete.json
-            out/payloads/
-            out/html/
+          path: out.tar.gz.enc
 
       # ── the chain: keep working until the queue is empty or a chunk fails ──
       - name: Cool down before chaining
@@ -166,10 +203,14 @@ jobs:
           if not queue.get("items"):
               print("queue empty — chain finished")
               raise SystemExit(0)
+          import sys as _sys
+          _sys.path.insert(0, "crawler")
+          import artifact_crypt as ac
+          sealed = ac.seal(json.dumps(queue))
           body = json.dumps({
               "ref": "main",
               "inputs": {
-                  "queue": json.dumps(queue),
+                  "queue": sealed,
                   "fast": os.environ.get("FAST", "true"),
                   "profile": queue.get("profile") or os.environ.get("PROFILE_MODE", "warm"),
               },
@@ -183,5 +224,7 @@ jobs:
                        "User-Agent": "etsy-chain"})
           with urllib.request.urlopen(req, timeout=30):
               pass
-          print("dispatched next chunk:", json.dumps(queue)[:400])
+          pages = [i.get("page", 1) for i in queue["items"]]
+          print("dispatched next chunk: %d item(s), starting page(s) %s, %d bytes sealed"
+                % (len(queue["items"]), pages[:6], len(sealed)))
           EOF
