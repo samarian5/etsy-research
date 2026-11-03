@@ -443,6 +443,10 @@ class Crawl:
         self.stopped_reason = None
         self.pages_done = 0
         self.started_at = time.time()
+        # A session that keeps getting challenged is not worth thousands of retries:
+        # past this many challenges the run stops, keeps its rows, and lets the chain
+        # retry the chunk once with a cold profile.
+        self.challenge_budget = int(os.environ.get("MAX_CHALLENGES") or 6)
         self.occurrences = 0
         self.seen: dict[str, dict] = {}   # listing_id -> card (first sighting wins)
         # Listings already collected earlier in this chain: they still count as
@@ -567,10 +571,16 @@ class Crawl:
             return True
         self.challenges += 1
         print(f"[crawl] challenge detected on {page_label} (title={title!r})", flush=True)
+        if self.challenges > self.challenge_budget:
+            self.stopped_reason = "challenges"
+            print(f"[crawl] challenge budget ({self.challenge_budget}) exhausted — "
+                  f"stopping this chunk with the rows collected", flush=True)
+            return False
         self.set_blocking(False)   # the slider renders from images
         for attempt, wait in ((1, 60), (2, 120), (3, 180)):
-            self.solve(sb, page_label)
-            time.sleep(wait)
+            solved = self.solve(sb, page_label)
+            # A solver that could not even start does not deserve the full backoff.
+            time.sleep(wait if solved else 5)
             try:
                 sb.refresh()
             except Exception:
