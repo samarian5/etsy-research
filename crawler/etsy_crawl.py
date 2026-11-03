@@ -28,6 +28,7 @@ import re
 import sys
 import time
 import traceback
+from bs4 import BeautifulSoup
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote_plus, urlparse, parse_qs
@@ -442,6 +443,11 @@ class Crawl:
         self.pages_done = 0
         self.occurrences = 0
         self.seen: dict[str, dict] = {}   # listing_id -> card (first sighting wins)
+        # Listings already collected earlier in this chain: they still count as
+        # "seen" so a chunk never pays for a page load it already made, and the
+        # coverage stop keeps working across chunk boundaries.
+        for lid in [x for x in (self.args.skip_ids or "").split(",") if x.strip()]:
+            self.seen[lid.strip()] = {"listing_id": lid.strip(), "carried": True}
 
     # -- browser ------------------------------------------------------------
     def launch(self):
@@ -464,6 +470,13 @@ class Crawl:
             kwargs["proxy"] = self.args.proxy
         print(f"[crawl] launching CDP chrome, profile={self.args.user_data_dir}", flush=True)
         return sb_cdp.Chrome(**kwargs)
+
+    # -- pacing -------------------------------------------------------------
+    def delay(self, lo: float = 1.5, hi: float = 3.0):
+        """Politeness pause. --fast halves it but never drops below 0.6s."""
+        if self.args.fast:
+            lo, hi = max(0.3, lo / 2), max(0.6, hi / 2)
+        human_delay(lo, hi)
 
     def _peek(self, sb) -> tuple[str, str]:
         try:
@@ -520,19 +533,24 @@ class Crawl:
     # -- discovery ----------------------------------------------------------
     def discover(self, sb):
         kw = self.args.keyword
-        for page_no in range(1, self.args.depth + 1):
+        first = max(1, self.args.pages_from)
+        last = min(self.args.pages_to or self.args.depth, self.args.depth)
+        print(f"[crawl] discovery slice: pages {first}-{last} (target depth {self.args.depth})",
+              flush=True)
+        for page_no in range(first, last + 1):
             if self.budget_left <= 0:
                 print("[crawl] request budget exhausted during discovery", flush=True)
+                self.stopped_reason = "budget"
                 break
             url = SEARCH_URL.format(q=quote_plus(kw), page=page_no)
             self.budget_left -= 1
-            print(f"[crawl] search page {page_no}/{self.args.depth}: {url}", flush=True)
+            print(f"[crawl] search page {page_no}/{last}: {url}", flush=True)
             try:
                 sb.goto(url)
             except Exception as e:
                 print(f"[crawl] goto failed: {e}", flush=True)
                 break
-            human_delay(1.0, 1.8)
+            self.delay(1.0, 1.8)
             if not self.guard(sb, f"search p{page_no}"):
                 print(f"[crawl] blocked, stopping discovery at page {page_no}", flush=True)
                 self.stopped_reason = "blocked"
@@ -562,13 +580,15 @@ class Crawl:
                   f"(total {len(self.seen)})", flush=True)
             if not new:
                 print("[crawl] coverage stop: no new listings on this page", flush=True)
+                self.stopped_reason = "coverage"
                 break
-            human_delay()
+            self.delay()
 
     # -- detail -------------------------------------------------------------
     def details(self, sb):
-        items = list(self.seen.values())
-        print(f"[crawl] visiting {len(items)} unique listings", flush=True)
+        items = [c for c in self.seen.values() if not c.get("carried")]
+        print(f"[crawl] visiting {len(items)} unique listings "
+              f"({len(self.seen) - len(items)} carried from earlier chunks)", flush=True)
         for i, card in enumerate(items, 1):
             if self.budget_left <= 0:
                 print("[crawl] request budget exhausted during detail pass", flush=True)
@@ -580,7 +600,7 @@ class Crawl:
             except Exception as e:
                 print(f"[crawl] detail goto failed {lid}: {e}", flush=True)
                 continue
-            human_delay(0.8, 1.5)
+            self.delay(0.8, 1.5)
             if not self.guard(sb, f"listing {lid}"):
                 print(f"[crawl] blocked on listing {lid}", flush=True)
                 if self.consecutive_blocks >= 3:
@@ -589,8 +609,15 @@ class Crawl:
                     self.stopped_reason = "blocked"
                     break
                 continue
-            soup = sb.get_beautiful_soup()
+            # One CDP fetch per page: a ~1 MB page source is the expensive part,
+            # and get_beautiful_soup() would fetch it a second time.
+            try:
+                sb.wait_for_element_present('script[type="application/ld+json"]', timeout=8)
+            except Exception:
+                pass
+            self.delay(0.4, 0.9)
             html = sb.get_page_source()
+            soup = BeautifulSoup(html, "html.parser")
             detail = extract_detail(html, soup, card["url"])
             if i <= self.args.save_detail_html:
                 with gzip.open(self.out / "html" / f"detail_{lid}.html.gz", "wt",
@@ -643,7 +670,7 @@ class Crawl:
             if i % 10 == 0:
                 print(f"[crawl] {i}/{len(items)} listings done, budget left {self.budget_left}",
                       flush=True)
-            human_delay()
+            self.delay()
 
     # -- entry --------------------------------------------------------------
     def run(self):
@@ -680,6 +707,11 @@ class Crawl:
                 "started_at": self.args.started_at,
                 "finished_at": now(),
                 "pages_done": self.pages_done,
+                "pages_from": self.args.pages_from,
+                "pages_to": (self.args.pages_to or self.args.depth),
+                "next_page": (self.args.pages_to or self.args.depth) + 1,
+                "slice_complete": self.stopped_reason is None,
+                "fast": bool(self.args.fast),
                 "occurrences": self.occurrences,
                 "unique_listings": len(self.seen),
                 "challenges": self.challenges,
@@ -702,14 +734,26 @@ def main() -> int:
     p.add_argument("--user-data-dir", default=str(Path.home() / ".etsy-profile"))
     p.add_argument("--browser-executable-path", default=None)
     p.add_argument("--proxy", default=os.environ.get("CRAWL_PROXY") or None)
+    p.add_argument("--pages-from", type=int, default=1,
+                   help="first search page of this chunk (1-based); chunks are page partitions")
+    p.add_argument("--pages-to", type=int, default=0,
+                   help="last search page of this chunk; 0 = whole depth in one go")
+    p.add_argument("--fast", action="store_true",
+                   help="tighter waits between page loads (still >=0.6s, still polite)")
+    p.add_argument("--skip-ids", default="",
+                   help="comma-separated listing ids already collected in this chain")
     p.add_argument("--save-html-pages", type=int, default=2,
                    help="keep HTML of the first N result pages for selector debugging")
     p.add_argument("--save-detail-html", type=int, default=3,
                    help="keep full HTML of the first N listing pages for selector debugging")
     p.add_argument("--started-at", default=now())
     args = p.parse_args()
+    if not args.pages_to:
+        args.pages_to = args.depth
+    args.pages_to = max(args.pages_from, min(args.pages_to, args.depth))
     if not args.max_requests:
-        args.max_requests = args.depth * 3 + 200
+        # one search page + up to 60 detail visits per page in the slice
+        args.max_requests = (args.pages_to - args.pages_from + 1) * 65 + 40
     return Crawl(args).run()
 
 
