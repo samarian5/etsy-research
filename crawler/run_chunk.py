@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import json
 import os
+
+import artifact_crypt as ac
 import sys
 import time
 from pathlib import Path
@@ -90,7 +92,7 @@ def main() -> int:
     page_from = max(1, min(int(item.get("page") or 1), depth))
     page_to = min(page_from + pages_per_run - 1, depth)
 
-    print(f"[chunk] {item['keyword']}: pages {page_from}-{page_to} of {depth} "
+    print(f"[chunk] {ac.kwtag(item['keyword'])}: pages {page_from}-{page_to} of {depth} "
           f"({len(rest)} item(s) queued behind it)", flush=True)
 
     out_dir = Path(os.environ.get("OUT_DIR") or "out")
@@ -138,14 +140,16 @@ def main() -> int:
 
     if nxt and nxt.get("items"):
         blob = json.dumps(nxt)
-        if len(blob) > 40000:  # workflow_dispatch inputs are capped around 64 KB
+        if len(blob) > 30000:  # sealed+base64 grows ~35%, and inputs cap near 64 KB
             for it in nxt["items"]:
                 if it.get("seen"):
                     it["seen"] = it["seen"][-80:]
             blob = json.dumps(nxt)
             print(f"[chunk] trimmed carried ids to fit input limit ({len(blob)} bytes)")
         (out_dir / "next_queue.json").write_text(blob, encoding="utf-8")
-        print("[chunk] next:", blob[:400], flush=True)
+        print("[chunk] next: %d item(s), next page %s, %d bytes"
+              % (len(nxt["items"]), nxt["items"][0].get("page") if nxt["items"] else None, len(blob)),
+              flush=True)
     else:
         (out_dir / "chain_complete.json").write_text(json.dumps({
             "last_run": meta.get("run_id"), "keyword": item.get("keyword"),
