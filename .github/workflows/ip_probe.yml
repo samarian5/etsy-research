@@ -1,0 +1,35 @@
+name: ip-probe
+
+# Answers one question with evidence: do concurrent GitHub-hosted runners egress
+# from different IPs? If they share a pool, splitting work across repos (or jobs)
+# buys no "load balancing" against a site's IP-reputation rules — it only
+# multiplies the request rate from the same addresses.
+on:
+  workflow_dispatch:
+    inputs:
+      jobs:
+        description: "how many parallel probes"
+        required: false
+        default: "5"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        n: [1, 2, 3, 4, 5]
+    steps:
+      - name: Egress identity
+        run: |
+          echo "probe=${{ matrix.n }} runner=${{ runner.name }}"
+          echo -n "ipify: "; curl -s --max-time 20 https://api.ipify.org || echo "ipify failed"
+          echo
+          echo -n "ipinfo: "; curl -s --max-time 20 https://ipinfo.io/json || echo "ipinfo failed"
+          echo
+          echo -n "cf-trace: "; curl -s --max-time 20 https://www.cloudflare.com/cdn-cgi/trace | grep -E "^(ip|loc)=" | tr '\n' ' '
+          echo
