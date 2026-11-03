@@ -34,9 +34,17 @@ class AdvanceTests(unittest.TestCase):
         self.assertIsNone(nxt)
         self.assertIn("complete at depth 4", reason)
 
-    def test_failure_stops_the_chain_without_advancing(self):
+    def test_blocked_chunk_retries_once_with_a_cold_profile(self):
         nxt, reason = advance({"keyword": "tshirt", "depth": 20}, [], 8, 8, 1,
                               {"status": "aborted", "stopped_reason": "blocked", "pages_done": 3})
+        self.assertEqual(nxt["profile"], "cold")
+        self.assertEqual(nxt["items"][0]["attempts"], 1)
+        self.assertEqual(nxt["items"][0]["page"], 1)   # same chunk, not the next page
+        self.assertIn("cold", reason)
+
+    def test_second_block_stops_the_chain(self):
+        nxt, reason = advance({"keyword": "tshirt", "depth": 20, "attempts": 1}, [], 8, 8, 1,
+                              {"status": "aborted", "stopped_reason": "blocked", "pages_done": 0})
         self.assertIsNone(nxt)
         self.assertIn("blocked", reason)
 
