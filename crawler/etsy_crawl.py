@@ -26,6 +26,7 @@ import os
 import random
 import re
 import sys
+import threading
 import time
 import traceback
 from bs4 import BeautifulSoup
@@ -441,6 +442,7 @@ class Crawl:
         self.consecutive_blocks = 0
         self.stopped_reason = None
         self.pages_done = 0
+        self.started_at = time.time()
         self.occurrences = 0
         self.seen: dict[str, dict] = {}   # listing_id -> card (first sighting wins)
         # Listings already collected earlier in this chain: they still count as
@@ -476,29 +478,51 @@ class Crawl:
     # Resources that never affect extraction: JSON-LD, <meta>, and the description
     # text are all in the HTML document. Blocking them cuts each listing page from
     # ~1 MB to ~150 KB of transfer, which is most of the per-listing wall clock.
-    BLOCK_URLS = [
+    MEDIA_URLS = [
         "*.jpg", "*.jpeg", "*.png", "*.webp", "*.gif", "*.avif", "*.ico",
         "*.woff", "*.woff2", "*.ttf", "*.otf", "*.eot",
         "*.mp4", "*.webm", "*.mp3",
+    ]
+    TRACKER_URLS = [
         "*google-analytics*", "*googletagmanager*", "*doubleclick*",
         "*facebook.net*", "*hotjar*", "*segment.io*", "*clarity.ms*",
     ]
+    BLOCK_URLS = MEDIA_URLS + TRACKER_URLS
 
     def block_heavy_resources(self, chrome) -> None:
         """Best-effort CDP Network.setBlockedURLs. Never fatal: a missed call only
         means slower pages, and page loads must keep working on any SeleniumBase."""
+        self._chrome = chrome
+        self._block_ok = False
         if os.environ.get("BLOCK_RESOURCES", "1") != "1":
             return
         try:
             import mycdp
             chrome.loop.run_until_complete(chrome.page.send(mycdp.network.enable()))
-            chrome.loop.run_until_complete(
-                chrome.page.send(mycdp.network.set_blocked_urls(urls=list(self.BLOCK_URLS))))
-            print(f"[crawl] blocked {len(self.BLOCK_URLS)} resource patterns "
-                  f"(images, fonts, media, trackers)", flush=True)
+            self._block_ok = True
         except Exception as e:  # noqa: BLE001
             print(f"[crawl] resource blocking unavailable ({type(e).__name__}: {e}) — "
                   f"continuing without it", flush=True)
+            return
+        if self.set_blocking(True):
+            print(f"[crawl] blocked {len(self.BLOCK_URLS)} resource patterns "
+                  f"(images, fonts, media, trackers)", flush=True)
+
+    def set_blocking(self, heavy: bool) -> bool:
+        """Toggle media blocking. Off while a captcha is on screen: the DataDome
+        slider is an image, and a blocked track image means the solver waits forever
+        for `div.slider` (measured: a 1h43m hang on run 41692014955)."""
+        if not getattr(self, "_block_ok", False):
+            return False
+        try:
+            import mycdp
+            urls = list(self.BLOCK_URLS) if heavy else list(self.TRACKER_URLS)
+            self._chrome.loop.run_until_complete(
+                self._chrome.page.send(mycdp.network.set_blocked_urls(urls=urls)))
+            return True
+        except Exception as e:  # noqa: BLE001
+            print(f"[crawl] could not change resource blocking: {e}", flush=True)
+            return False
 
     # -- pacing -------------------------------------------------------------
     def delay(self, lo: float = 1.5, hi: float = 3.0):
@@ -506,6 +530,17 @@ class Crawl:
         if self.args.fast:
             lo, hi = max(0.3, lo / 2), max(0.6, hi / 2)
         human_delay(lo, hi)
+
+    def out_of_time(self) -> bool:
+        """Wall clock guard: land the artifact before the job is killed at 350 min."""
+        budget = float(os.environ.get("MAX_WALL_MINUTES") or 300) * 60
+        if time.time() - self.started_at > budget:
+            if not self.stopped_reason:
+                self.stopped_reason = "time"
+            print(f"[crawl] wall-clock budget of {budget / 60:.0f} min reached — "
+                  f"stopping cleanly with the rows collected", flush=True)
+            return True
+        return False
 
     def _peek(self, sb) -> tuple[str, str]:
         try:
@@ -532,6 +567,7 @@ class Crawl:
             return True
         self.challenges += 1
         print(f"[crawl] challenge detected on {page_label} (title={title!r})", flush=True)
+        self.set_blocking(False)   # the slider renders from images
         for attempt, wait in ((1, 60), (2, 120), (3, 180)):
             self.solve(sb, page_label)
             time.sleep(wait)
@@ -543,21 +579,48 @@ class Crawl:
             title, html = self._peek(sb)
             if not looks_blocked(title, html):
                 self.consecutive_blocks = 0
+                self.set_blocking(True)
                 print(f"[crawl] challenge cleared on attempt {attempt} ({page_label})", flush=True)
                 return True
             print(f"[crawl] still blocked after attempt {attempt} ({page_label})", flush=True)
         self.consecutive_blocks += 1
+        self.set_blocking(True)
         print(f"[crawl] giving up on {page_label}; "
               f"{self.consecutive_blocks} consecutive blocked pages", flush=True)
         return False
 
-    def solve(self, sb, label: str):
-        try:
-            sb.solve_captcha()
-            print(f"[crawl] solve_captcha() attempted on {label}", flush=True)
-        except Exception as e:
-            print(f"[crawl] solve_captcha failed: {e}", flush=True)
-        human_delay(2, 3)
+    def solve(self, sb, label: str) -> bool:
+        """Call SeleniumBase's captcha solver with a hard deadline.
+
+        solve_captcha() is a black box: it opens a tab for the DataDome iframe and
+        waits for `div.slider` to appear, with no timeout of its own. A challenge it
+        cannot render therefore blocks the run forever — measured: 1h43m of silence
+        on one search page (run 41692014955). So it runs in a daemon thread that we
+        stop waiting on after SOLVE_TIMEOUT seconds and report as a failed attempt.
+        """
+        timeout = int(os.environ.get("SOLVE_TIMEOUT") or 90)
+        outcome: dict[str, str] = {}
+
+        def worker():
+            try:
+                sb.solve_captcha()
+                outcome["ok"] = "1"
+            except Exception as e:  # noqa: BLE001
+                outcome["err"] = f"{type(e).__name__}: {e}"
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        t.join(timeout)
+        if t.is_alive():
+            print(f"[crawl] solve_captcha() still running after {timeout}s on {label} — "
+                  f"abandoning this attempt", flush=True)
+            return False
+        if "err" in outcome:
+            print(f"[crawl] solve_captcha failed: {outcome['err']}", flush=True)
+            return False
+        print(f"[crawl] solve_captcha() attempted on {label}", flush=True)
+        self.delay(2, 3)
+        return True
 
     # -- discovery ----------------------------------------------------------
     def discover(self, sb):
@@ -567,6 +630,8 @@ class Crawl:
         print(f"[crawl] discovery slice: pages {first}-{last} (target depth {self.args.depth})",
               flush=True)
         for page_no in range(first, last + 1):
+            if self.out_of_time():
+                break
             if self.budget_left <= 0:
                 print("[crawl] request budget exhausted during discovery", flush=True)
                 self.stopped_reason = "budget"
@@ -619,6 +684,8 @@ class Crawl:
         print(f"[crawl] visiting {len(items)} unique listings "
               f"({len(self.seen) - len(items)} carried from earlier chunks)", flush=True)
         for i, card in enumerate(items, 1):
+            if self.out_of_time():
+                break
             if self.budget_left <= 0:
                 print("[crawl] request budget exhausted during detail pass", flush=True)
                 break
