@@ -108,27 +108,24 @@ class ArtifactUnpackTests(unittest.TestCase):
         return buf.getvalue()
 
     def test_sealed_artifact_imports(self):
-        from app import github_actions as gh
         dest = Path(tempfile.mkdtemp())
-        gh.unpack_artifact(self._sealed_artifact(), dest)
+        ac.unpack_artifact(self._sealed_artifact(), dest)
         self.assertTrue((dest / "results.jsonl").exists())
         self.assertEqual(json.loads((dest / "run.json").read_text())["status"], "succeeded")
         self.assertEqual(list(dest.rglob("*.enc")), [])   # ciphertext cleaned up
 
     def test_sealed_artifact_with_wrong_key_fails_loudly(self):
-        from app import github_actions as gh
         blob = self._sealed_artifact()
         os.environ[ac.KEY_ENV] = WRONG
         with self.assertRaises(RuntimeError):
-            gh.unpack_artifact(blob, Path(tempfile.mkdtemp()))
+            ac.unpack_artifact(blob, Path(tempfile.mkdtemp()))
 
     def test_legacy_plaintext_artifact_still_imports(self):
-        from app import github_actions as gh
         buf = BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             zf.writestr("out/run.json", '{"status": "succeeded"}')
         dest = Path(tempfile.mkdtemp())
-        gh.unpack_artifact(buf.getvalue(), dest)
+        ac.unpack_artifact(buf.getvalue(), dest)
         self.assertTrue((dest / "out" / "run.json").exists())
 
 
