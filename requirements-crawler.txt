@@ -1,0 +1,2 @@
+# Crawler-only — installed on the GitHub Actions runner, never needed to serve the UI.
+seleniumbase>=4.39
