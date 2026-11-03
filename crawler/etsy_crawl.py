@@ -764,6 +764,7 @@ class Crawl:
             self.results_fh.flush()
             self.occurrences += 1
             if i % 10 == 0:
+                self.write_meta("running", partial=True)
                 print(f"[crawl] {i}/{len(items)} listings done, budget left {self.budget_left}",
                       flush=True)
             self.delay()
@@ -778,6 +779,7 @@ class Crawl:
             human_delay(1.5, 2.5)
             self.guard(sb, "home")
             self.discover(sb)
+            self.write_meta("running", partial=True)
             self.details(sb)
         except Exception as e:
             status = "failed"
@@ -793,30 +795,45 @@ class Crawl:
             if status == "succeeded" and self.stopped_reason:
                 status = "aborted"
                 error = f"stopped early: {self.stopped_reason} (rows kept)"
-            meta = {
-                "run_id": self.args.run_id,
-                "keyword": self.args.keyword,
-                "depth": self.args.depth,
-                "status": status,
-                "error": error,
-                "stopped_reason": self.stopped_reason,
-                "started_at": self.args.started_at,
-                "finished_at": now(),
-                "pages_done": self.pages_done,
-                "pages_from": self.args.pages_from,
-                "pages_to": (self.args.pages_to or self.args.depth),
-                "next_page": (self.args.pages_to or self.args.depth) + 1,
-                "slice_complete": self.stopped_reason is None,
-                "fast": bool(self.args.fast),
-                "occurrences": self.occurrences,
-                "unique_listings": len(self.seen),
-                "challenges": self.challenges,
-                "requests_used": self.args.max_requests - self.budget_left,
-                "budget": self.args.max_requests,
-            }
-            (self.out / "run.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
-            print("[crawl] run.json:", json.dumps(meta), flush=True)
+            self.write_meta(status, error)
         return 0 if status == "succeeded" else 1
+
+    def write_meta(self, status: str, error: str | None = None,
+                   partial: bool = False) -> None:
+        """Write run.json atomically.
+
+        Called after every 10 listings as well as at the end: a chunk that is
+        cancelled or killed still leaves importable metadata next to its rows,
+        instead of an artifact full of results.jsonl that the importer has to
+        discard because it cannot tell what it is.
+        """
+        meta = {
+            "run_id": self.args.run_id,
+            "keyword": self.args.keyword,
+            "depth": self.args.depth,
+            "status": status,
+            "error": error,
+            "partial": partial,
+            "stopped_reason": self.stopped_reason,
+            "started_at": self.args.started_at,
+            "finished_at": None if partial else now(),
+            "pages_done": self.pages_done,
+            "pages_from": self.args.pages_from,
+            "pages_to": (self.args.pages_to or self.args.depth),
+            "next_page": self.pages_done + 1 if partial else (self.args.pages_to or self.args.depth) + 1,
+            "slice_complete": (self.stopped_reason is None) and not partial,
+            "fast": bool(self.args.fast),
+            "occurrences": self.occurrences,
+            "unique_listings": len(self.seen),
+            "challenges": self.challenges,
+            "requests_used": self.args.max_requests - self.budget_left,
+            "budget": self.args.max_requests,
+        }
+        tmp = self.out / "run.json.tmp"
+        tmp.write_text(json.dumps(meta, indent=1), encoding="utf-8")
+        tmp.replace(self.out / "run.json")
+        if not partial:
+            print("[crawl] run.json:", json.dumps(meta), flush=True)
 
 
 def main() -> int:
