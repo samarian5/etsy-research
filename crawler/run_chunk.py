@@ -26,7 +26,7 @@ sys.path.insert(0, str(ROOT))
 
 
 def advance(item: dict, rest: list[dict], pages_per_run: int, page_to: int,
-            rc: int, meta: dict) -> tuple[dict | None, str]:
+            rc: int, meta: dict, profile: str = "warm") -> tuple[dict | None, str]:
     """Decide the next queue from what just happened. Pure — unit tested.
 
     Returns (next_queue | None, reason).
@@ -39,25 +39,36 @@ def advance(item: dict, rest: list[dict], pages_per_run: int, page_to: int,
     if rc != 0:
         if stopped == "coverage":
             # Deeper pages yield nothing new — this keyword is finished, go on.
-            nxt = {"items": rest, "pages_per_run": pages_per_run} if rest else None
+            nxt = ({"items": rest, "pages_per_run": pages_per_run, "profile": profile}
+                   if rest else None)
             return nxt, "coverage-stop: keyword finished"
-        if stopped == "budget":
-            # Only the per-chunk request budget ran out: resume at the first page
-            # that was never crawled. Nothing was lost.
+        if stopped == "budget" or stopped == "time":
+            # Only the chunk's own budget ran out: resume at the first page that was
+            # never crawled. Nothing was lost.
             resume = max(int(item.get("page") or 1), done + 1)
             if resume <= depth:
                 return ({"items": [{**item, "page": resume}, *rest],
-                         "pages_per_run": pages_per_run},
+                         "pages_per_run": pages_per_run, "profile": profile},
                         f"budget-stop: resuming at page {resume}")
-            return ({"items": rest, "pages_per_run": pages_per_run} if rest else None,
+            return ({"items": rest, "pages_per_run": pages_per_run, "profile": profile}
+                    if rest else None,
                     "budget-stop at final page: keyword finished")
+        if stopped == "blocked":
+            # A blocked chunk means a suspect session, not a dead end: retry the same
+            # page range ONCE with a fresh profile, then stop rather than hammer.
+            if int(item.get("attempts") or 0) < 1:
+                retry = {**item, "attempts": int(item.get("attempts") or 0) + 1}
+                return ({"items": [retry, *rest], "pages_per_run": pages_per_run,
+                         "profile": "cold"},
+                        "blocked: retrying this chunk once with a cold profile")
         return None, f"failed rc={rc} stopped_reason={stopped}"
 
     if page_to < depth:
         return ({"items": [{**item, "page": page_to + 1}, *rest],
-                 "pages_per_run": pages_per_run},
+                 "pages_per_run": pages_per_run, "profile": profile},
                 f"slice done: resuming at page {page_to + 1}")
-    return ({"items": rest, "pages_per_run": pages_per_run} if rest else None,
+    return ({"items": rest, "pages_per_run": pages_per_run, "profile": profile}
+            if rest else None,
             f"keyword '{item.get('keyword')}' complete at depth {depth}")
 
 
@@ -121,7 +132,8 @@ def main() -> int:
                 fresh.append(lid)
     item["seen"] = (carried + fresh)[-300:]
 
-    nxt, reason = advance(item, rest, pages_per_run, page_to, rc, meta)
+    nxt, reason = advance(item, rest, pages_per_run, page_to, rc, meta,
+                          profile=(os.environ.get("PROFILE_MODE") or "warm"))
     print(f"[chunk] {reason}", flush=True)
 
     if nxt and nxt.get("items"):
