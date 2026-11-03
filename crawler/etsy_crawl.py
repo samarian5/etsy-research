@@ -469,7 +469,36 @@ class Crawl:
         if self.args.proxy:
             kwargs["proxy"] = self.args.proxy
         print(f"[crawl] launching CDP chrome, profile={self.args.user_data_dir}", flush=True)
-        return sb_cdp.Chrome(**kwargs)
+        chrome = sb_cdp.Chrome(**kwargs)
+        self.block_heavy_resources(chrome)
+        return chrome
+
+    # Resources that never affect extraction: JSON-LD, <meta>, and the description
+    # text are all in the HTML document. Blocking them cuts each listing page from
+    # ~1 MB to ~150 KB of transfer, which is most of the per-listing wall clock.
+    BLOCK_URLS = [
+        "*.jpg", "*.jpeg", "*.png", "*.webp", "*.gif", "*.avif", "*.ico",
+        "*.woff", "*.woff2", "*.ttf", "*.otf", "*.eot",
+        "*.mp4", "*.webm", "*.mp3",
+        "*google-analytics*", "*googletagmanager*", "*doubleclick*",
+        "*facebook.net*", "*hotjar*", "*segment.io*", "*clarity.ms*",
+    ]
+
+    def block_heavy_resources(self, chrome) -> None:
+        """Best-effort CDP Network.setBlockedURLs. Never fatal: a missed call only
+        means slower pages, and page loads must keep working on any SeleniumBase."""
+        if os.environ.get("BLOCK_RESOURCES", "1") != "1":
+            return
+        try:
+            import mycdp
+            chrome.loop.run_until_complete(chrome.page.send(mycdp.network.enable()))
+            chrome.loop.run_until_complete(
+                chrome.page.send(mycdp.network.set_blocked_urls(urls=list(self.BLOCK_URLS))))
+            print(f"[crawl] blocked {len(self.BLOCK_URLS)} resource patterns "
+                  f"(images, fonts, media, trackers)", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"[crawl] resource blocking unavailable ({type(e).__name__}: {e}) — "
+                  f"continuing without it", flush=True)
 
     # -- pacing -------------------------------------------------------------
     def delay(self, lo: float = 1.5, hi: float = 3.0):
