@@ -437,6 +437,8 @@ class Crawl:
         self.results_fh = open(self.out / "results.jsonl", "a", encoding="utf-8")
         self.budget_left = args.max_requests
         self.challenges = 0
+        self.consecutive_blocks = 0
+        self.stopped_reason = None
         self.pages_done = 0
         self.occurrences = 0
         self.seen: dict[str, dict] = {}   # listing_id -> card (first sighting wins)
@@ -463,38 +465,49 @@ class Crawl:
         print(f"[crawl] launching CDP chrome, profile={self.args.user_data_dir}", flush=True)
         return sb_cdp.Chrome(**kwargs)
 
-    def guard(self, sb, page_label: str) -> bool:
-        """Return True if we may continue on this page."""
-        title = ""
+    def _peek(self, sb) -> tuple[str, str]:
         try:
             title = sb.get_page_title() or ""
         except Exception:
-            pass
-        html = ""
+            title = ""
         try:
             html = sb.get_page_source() or ""
         except Exception:
-            pass
-        if looks_blocked(title, html):
-            self.challenges += 1
-            print(f"[crawl] challenge detected on {page_label} (title={title!r})", flush=True)
+            html = ""
+        return title, html
+
+    def guard(self, sb, page_label: str) -> bool:
+        """True if we may continue on this page.
+
+        Bounded on purpose: a challenge costs at most ~6 minutes of escalating
+        retries, never an unbounded 15-minute nap. A 15-minute pause per page was
+        what turned a 15-minute run into a 2-hour one — the session stayed
+        flagged, so every subsequent listing paid the pause again.
+        """
+        title, html = self._peek(sb)
+        if not looks_blocked(title, html):
+            self.consecutive_blocks = 0
+            return True
+        self.challenges += 1
+        print(f"[crawl] challenge detected on {page_label} (title={title!r})", flush=True)
+        for attempt, wait in ((1, 60), (2, 120), (3, 180)):
             self.solve(sb, page_label)
+            time.sleep(wait)
             try:
-                html = sb.get_page_source() or ""
-                title = sb.get_page_title() or ""
+                sb.refresh()
             except Exception:
                 pass
-            if looks_blocked(title, html):
-                print("[crawl] still blocked after solve; pausing 15 minutes", flush=True)
-                time.sleep(900)
-                try:
-                    sb.refresh()
-                    html = sb.get_page_source() or ""
-                    title = sb.get_page_title() or ""
-                except Exception:
-                    return False
-                return not looks_blocked(title, html)
-        return True
+            human_delay(1.0, 2.0)
+            title, html = self._peek(sb)
+            if not looks_blocked(title, html):
+                self.consecutive_blocks = 0
+                print(f"[crawl] challenge cleared on attempt {attempt} ({page_label})", flush=True)
+                return True
+            print(f"[crawl] still blocked after attempt {attempt} ({page_label})", flush=True)
+        self.consecutive_blocks += 1
+        print(f"[crawl] giving up on {page_label}; "
+              f"{self.consecutive_blocks} consecutive blocked pages", flush=True)
+        return False
 
     def solve(self, sb, label: str):
         try:
@@ -522,6 +535,7 @@ class Crawl:
             human_delay(1.0, 1.8)
             if not self.guard(sb, f"search p{page_no}"):
                 print(f"[crawl] blocked, stopping discovery at page {page_no}", flush=True)
+                self.stopped_reason = "blocked"
                 break
             # Lazy-loaded cards: scroll to force render (verified approach in raw_cdp_etsy.py)
             try:
@@ -569,6 +583,11 @@ class Crawl:
             human_delay(0.8, 1.5)
             if not self.guard(sb, f"listing {lid}"):
                 print(f"[crawl] blocked on listing {lid}", flush=True)
+                if self.consecutive_blocks >= 3:
+                    print("[crawl] circuit breaker: 3 consecutive blocked pages — "
+                          "stopping detail pass, keeping collected rows", flush=True)
+                    self.stopped_reason = "blocked"
+                    break
                 continue
             soup = sb.get_beautiful_soup()
             html = sb.get_page_source()
@@ -648,12 +667,16 @@ class Crawl:
             except Exception:
                 pass
             self.results_fh.close()
+            if status == "succeeded" and self.stopped_reason:
+                status = "aborted"
+                error = f"stopped early: {self.stopped_reason} (rows kept)"
             meta = {
                 "run_id": self.args.run_id,
                 "keyword": self.args.keyword,
                 "depth": self.args.depth,
                 "status": status,
                 "error": error,
+                "stopped_reason": self.stopped_reason,
                 "started_at": self.args.started_at,
                 "finished_at": now(),
                 "pages_done": self.pages_done,
