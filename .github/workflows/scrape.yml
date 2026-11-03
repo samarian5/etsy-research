@@ -10,6 +10,10 @@ on:
         description: "Pages to walk (1-100). Ceiling, not a promise."
         required: false
         default: "20"
+      profile:
+        description: "warm = reuse the cached Chrome profile; cold = start clean after a block"
+        required: false
+        default: "warm"
   # Optional weekly refresh — enable once the first manual runs look clean.
   # schedule:
   #   - cron: "17 3 * * 1"
@@ -57,6 +61,8 @@ jobs:
 
       # ── warm profile: restore last known-good, save only on success (ADR 0002) ──
       - name: Restore Chrome profile cache
+        id: profile
+        if: inputs.profile != 'cold'
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.PROFILE_DIR }}
@@ -85,8 +91,22 @@ jobs:
                  "$PROFILE_DIR/Default/GPUCache" "$PROFILE_DIR/Default/Service Worker" || true
           du -sh "$PROFILE_DIR" || true
 
-      - name: Save Chrome profile cache (only after a clean run)
+      - name: Decide whether this profile is safe to cache
+        id: clean
         if: success()
+        run: |
+          python - <<'EOF'
+          import json, os
+          meta = json.load(open("out/run.json"))
+          clean = meta.get("status") == "succeeded" and int(meta.get("challenges") or 0) == 0
+          print("status:", meta.get("status"), "| challenges:", meta.get("challenges"),
+                "| cacheable:", clean)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write("clean=%s\n" % ("true" if clean else "false"))
+          EOF
+
+      - name: Save Chrome profile cache (only after a challenge-free run)
+        if: success() && steps.clean.outputs.clean == 'true'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.PROFILE_DIR }}
