@@ -325,6 +325,41 @@ def extract_payload(html: str) -> str | None:
     return best[:400_000] if best else None
 
 
+def build_payload(html: str, soup, detail: dict, url: str) -> dict:
+    """Everything needed to re-derive a row without re-crawling (ADR 0003).
+
+    Etsy no longer ships a fat <script type="application/json"> block on listing
+    pages, so the payload is assembled from the three tiers we actually use:
+    JSON-LD, OpenGraph/meta, and the description HTML block.
+    """
+    import json as _json
+
+    meta = {}
+    if soup:
+        for tag in soup.find_all("meta"):
+            k = tag.get("property") or tag.get("name")
+            v = tag.get("content")
+            if k and v:
+                meta[k] = v
+    jsonld = None
+    if soup:
+        for tag in soup.find_all("script", {"type": "application/ld+json"}):
+            try:
+                jsonld = _json.loads(tag.string or "")
+                break
+            except Exception:
+                continue
+    return {
+        "url": url,
+        "html_length": len(html),
+        "jsonld": jsonld,
+        "meta": meta,
+        "blob": extract_payload(html),
+        "description_html": detail.get("description_html"),
+    }
+
+
+
 # ──────────────────────────────── the crawl ─────────────────────────────────
 
 
@@ -473,12 +508,14 @@ class Crawl:
             soup = sb.get_beautiful_soup()
             html = sb.get_page_source()
             detail = extract_detail(html, soup, card["url"])
-            payload = extract_payload(html)
-            payload_path = None
-            if payload:
-                payload_path = f"payloads/{lid}.json.gz"
-                with gzip.open(self.out / payload_path, "wt", encoding="utf-8") as fh:
-                    fh.write(payload)
+            if i <= self.args.save_detail_html:
+                with gzip.open(self.out / "html" / f"detail_{lid}.html.gz", "wt",
+                               encoding="utf-8") as fh:
+                    fh.write(html)
+            payload_path = f"payloads/{lid}.json.gz"
+            with gzip.open(self.out / payload_path, "wt", encoding="utf-8") as fh:
+                json.dump(build_payload(html, soup, detail, card["url"]), fh,
+                          ensure_ascii=False, default=str)
 
             row = {
                 "run_id": self.args.run_id,
@@ -578,6 +615,8 @@ def main() -> int:
     p.add_argument("--proxy", default=os.environ.get("CRAWL_PROXY") or None)
     p.add_argument("--save-html-pages", type=int, default=2,
                    help="keep HTML of the first N result pages for selector debugging")
+    p.add_argument("--save-detail-html", type=int, default=3,
+                   help="keep full HTML of the first N listing pages for selector debugging")
     p.add_argument("--started-at", default=now())
     args = p.parse_args()
     if not args.max_requests:
