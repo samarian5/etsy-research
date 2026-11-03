@@ -78,6 +78,16 @@ jobs:
           restore-keys: |
             etsy-profile-v1-
 
+      - name: Egress identity
+        # Logged so a chunk's outcome can be correlated with the IP it ran from.
+        # Standard GitHub runners get a fresh address per VM out of a pool shared
+        # with every other Azure customer, so a bad-neighbour IP shows up as a
+        # challenge storm — and only this line tells you it was the IP's fault.
+        run: |
+          IP=$(curl -s --max-time 15 https://api.ipify.org || echo unknown)
+          echo "egress_ip=$IP"
+          echo "EGRESS_IP=$IP" >> "$GITHUB_ENV"
+
       - name: Crawl one chunk
         run: |
           CHROME_BIN="$(command -v google-chrome || find "$RUNNER_TEMP/chrome" -name chrome -type f | head -1)"
