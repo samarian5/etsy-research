@@ -339,6 +339,20 @@ def extract_detail(html: str, soup, url: str) -> dict:
     out["is_star_seller"] = bool(re.search(r"\bstar seller\b", page_text, re.I))
     out["free_shipping"] = bool(re.search(r"\bfree shipping\b", page_text, re.I))
 
+    # Favorites fallback: the OpenGraph description states it when the listing has
+    # any ("... has 1,100 favorites from Etsy shoppers"). New listings omit the
+    # clause entirely, which means zero — not "unknown".
+    if out["favorites"] is None and soup:
+        og = soup.find("meta", attrs={"property": "og:description"})
+        if og and og.get("content"):
+            m = re.search(r"has\s+([\d.,]+[kKmM]?)\s+favorites", og["content"])
+            if m:
+                out["favorites"] = parse_count(m.group(1))
+                ex["dom"] = True
+            elif "is sold by" in og["content"]:
+                out["favorites"] = 0
+                ex["dom"] = True
+
     # Price range / sale inference from the visible price block
     price_block = soup.select_one('[data-buy-box-region="price"]') if soup else None
     if price_block:
@@ -596,6 +610,7 @@ class Crawl:
                 "free_shipping": detail["free_shipping"],
                 "variation_count": detail["variation_count"],
                 "images_count": detail["images_count"],
+                "category_path": detail["category_path"],
                 "thumbnail_url": detail["thumbnail_url"],
                 "description": detail["description"],
                 "description_html": detail["description_html"],
