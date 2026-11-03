@@ -36,6 +36,7 @@ jobs:
       QUEUE: ${{ inputs.queue }}
       FAST: ${{ inputs.fast }}
       PROFILE_MODE: ${{ inputs.profile }}
+      COOLDOWN_SECONDS: "300"   # breathe between chunks: a flagged IP needs the gap
       REPO: ${{ github.repository }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -132,6 +133,16 @@ jobs:
             out/html/
 
       # ── the chain: keep working until the queue is empty or a chunk fails ──
+      - name: Cool down before chaining
+        if: success()
+        run: |
+          if [ -f out/next_queue.json ]; then
+            echo "sleeping ${COOLDOWN_SECONDS}s before the next chunk"
+            sleep "${COOLDOWN_SECONDS}"
+          else
+            echo "queue finished — no cooldown needed"
+          fi
+
       - name: Dispatch next chunk
         if: success()
         run: |
