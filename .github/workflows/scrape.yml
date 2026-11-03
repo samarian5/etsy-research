@@ -3,32 +3,41 @@ name: scrape
 on:
   workflow_dispatch:
     inputs:
-      keyword:
-        description: "Search phrase, e.g. t-shirt"
+      queue:
+        description: 'JSON queue {"items":[{"keyword":"tshirt","depth":20}],"pages_per_run":8}'
         required: true
-      depth:
-        description: "Pages to walk (1-100). Ceiling, not a promise."
+      fast:
+        description: "true = tighter waits (still >=0.6s between page loads)"
         required: false
-        default: "20"
+        default: "true"
       profile:
-        description: "warm = reuse the cached Chrome profile; cold = start clean after a block"
+        description: "warm = reuse cached Chrome profile; cold = start clean after a block"
         required: false
         default: "warm"
-  # Optional weekly refresh — enable once the first manual runs look clean.
+  # Weekly refresh can dispatch a queue built from the keyword table.
   # schedule:
   #   - cron: "17 3 * * 1"
 
+permissions:
+  contents: read
+  actions: write            # required to chain the next chunk
+
 concurrency:
-  group: etsy-crawl          # single-flight: never two crawls at once (ADR 0001)
+  group: etsy-crawl         # single-flight: never two crawls at once (ADR 0001)
   cancel-in-progress: false
 
 jobs:
   crawl:
     runs-on: ubuntu-latest
-    timeout-minutes: 350     # under GHA's 6h cap, with room to abort cleanly
+    timeout-minutes: 350    # under GHA's 6h cap, with room to abort cleanly
     env:
       PYTHONUNBUFFERED: "1"
       PROFILE_DIR: ${{ github.workspace }}/.etsy-profile
+      QUEUE: ${{ inputs.queue }}
+      FAST: ${{ inputs.fast }}
+      PROFILE_MODE: ${{ inputs.profile }}
+      REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -53,15 +62,13 @@ jobs:
           pip install -r requirements.txt -r requirements-crawler.txt
 
       - name: Verify CDP stack
-        run: |
-          python -c "import seleniumbase, sb_cdp" 2>/dev/null || python -c "import seleniumbase; from seleniumbase import sb_cdp; print('seleniumbase', seleniumbase.__version__)"
+        run: python -c "import seleniumbase; from seleniumbase import sb_cdp; print('seleniumbase', seleniumbase.__version__)"
 
-      - name: Unit tests (parsers)
+      - name: Unit tests (parsers + captured live page)
         run: python -m unittest discover -s tests -v
 
-      # ── warm profile: restore last known-good, save only on success (ADR 0002) ──
+      # ── warm profile: restore last known-good, save only after a clean run ──
       - name: Restore Chrome profile cache
-        id: profile
         if: inputs.profile != 'cold'
         uses: actions/cache/restore@v4
         with:
@@ -70,19 +77,13 @@ jobs:
           restore-keys: |
             etsy-profile-v1-
 
-      - name: Crawl
+      - name: Crawl one chunk
         run: |
           CHROME_BIN="$(command -v google-chrome || find "$RUNNER_TEMP/chrome" -name chrome -type f | head -1)"
           echo "chrome: $CHROME_BIN"
+          export BROWSER_BIN="$CHROME_BIN"
           mkdir -p out
-          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
-            python crawler/etsy_crawl.py \
-              --keyword "${{ inputs.keyword }}" \
-              --depth "${{ inputs.depth }}" \
-              --run-id "${{ github.run_id }}" \
-              --out out \
-              --user-data-dir "$PROFILE_DIR" \
-              --browser-executable-path "$CHROME_BIN"
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" python crawler/run_chunk.py
 
       - name: Prune profile before caching
         if: success()
@@ -97,7 +98,10 @@ jobs:
         run: |
           python - <<'EOF'
           import json, os
-          meta = json.load(open("out/run.json"))
+          try:
+              meta = json.load(open("out/run.json"))
+          except Exception:
+              meta = {}
           clean = meta.get("status") == "succeeded" and int(meta.get("challenges") or 0) == 0
           print("status:", meta.get("status"), "| challenges:", meta.get("challenges"),
                 "| cacheable:", clean)
@@ -122,5 +126,41 @@ jobs:
           path: |
             out/results.jsonl
             out/run.json
+            out/next_queue.json
+            out/chain_complete.json
             out/payloads/
             out/html/
+
+      # ── the chain: keep working until the queue is empty or a chunk fails ──
+      - name: Dispatch next chunk
+        if: success()
+        run: |
+          python - <<'EOF'
+          import json, os, urllib.request
+          path = "out/next_queue.json"
+          if not os.path.exists(path):
+              print("nothing to dispatch — chain finished")
+              raise SystemExit(0)
+          queue = json.load(open(path))
+          if not queue.get("items"):
+              print("queue empty — chain finished")
+              raise SystemExit(0)
+          body = json.dumps({
+              "ref": "main",
+              "inputs": {
+                  "queue": json.dumps(queue),
+                  "fast": os.environ.get("FAST", "true"),
+                  "profile": os.environ.get("PROFILE_MODE", "warm"),
+              },
+          }).encode()
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{os.environ['REPO']}/actions/workflows/scrape.yml/dispatches",
+              data=body, method="POST",
+              headers={"Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                       "Accept": "application/vnd.github+json",
+                       "X-GitHub-Api-Version": "2022-11-28",
+                       "User-Agent": "etsy-chain"})
+          with urllib.request.urlopen(req, timeout=30):
+              pass
+          print("dispatched next chunk:", json.dumps(queue)[:400])
+          EOF
