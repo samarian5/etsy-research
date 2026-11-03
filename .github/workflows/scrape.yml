@@ -150,7 +150,7 @@ jobs:
               "inputs": {
                   "queue": json.dumps(queue),
                   "fast": os.environ.get("FAST", "true"),
-                  "profile": os.environ.get("PROFILE_MODE", "warm"),
+                  "profile": queue.get("profile") or os.environ.get("PROFILE_MODE", "warm"),
               },
           }).encode()
           req = urllib.request.Request(
