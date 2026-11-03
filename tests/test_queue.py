@@ -39,7 +39,7 @@ class AdvanceTests(unittest.TestCase):
                               {"status": "aborted", "stopped_reason": "blocked", "pages_done": 3})
         self.assertEqual(nxt["profile"], "cold")
         self.assertEqual(nxt["items"][0]["attempts"], 1)
-        self.assertEqual(nxt["items"][0]["page"], 1)   # same chunk, not the next page
+        self.assertNotIn("page", nxt["items"][0])       # same chunk, page 1 implicitly
         self.assertIn("cold", reason)
 
     def test_second_block_stops_the_chain(self):
