@@ -126,3 +126,35 @@ def kwtag(keyword: str) -> str:
         import hashlib
         return "kw-" + hashlib.sha256(keyword.encode()).hexdigest()[:8]
     return keyword
+
+
+def unpack_artifact(blob: bytes, dest, env_file: str | None = None):
+    """Extract an uploaded artifact, decrypting it when it arrives sealed.
+
+    A public repository means every artifact is world-readable, so the crawl
+    uploads one file: ``out.tar.gz.enc``. Artifacts from before that change are
+    plain zips of ``out/`` and still import. Lives here rather than in the
+    dashboard package because this module is the only one shipped to the runner,
+    and the runner runs these tests before every crawl.
+    """
+    import io
+    import tarfile
+    import zipfile
+    from pathlib import Path as _Path
+
+    dest = _Path(dest)
+    dest.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(io.BytesIO(blob)) as zf:
+        zf.extractall(dest)
+    sealed = list(dest.rglob("*.tar.gz.enc"))
+    if not sealed:
+        return dest
+    if env_file:
+        load_env_file(env_file)
+    plain = sealed[0].with_suffix("")            # out.tar.gz
+    unseal_file(str(sealed[0]), str(plain))
+    with tarfile.open(plain, "r:gz") as tf:
+        tf.extractall(dest, filter="data")
+    sealed[0].unlink(missing_ok=True)
+    plain.unlink(missing_ok=True)
+    return dest
