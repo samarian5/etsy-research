@@ -203,6 +203,33 @@ def _find_json_ld(soup) -> dict | None:
     return best
 
 
+def _breadcrumb_path(soup) -> str | None:
+    """Etsy ships a BreadcrumbList JSON-LD block; join the names into one path."""
+    import json as _json
+    for tag in soup.find_all("script", {"type": "application/ld+json"}):
+        raw = tag.string or ""
+        if "BreadcrumbList" not in raw:
+            continue
+        try:
+            data = _json.loads(raw)
+        except Exception:
+            continue
+        items = data.get("itemListElement") if isinstance(data, dict) else None
+        if not isinstance(items, list):
+            continue
+        names = []
+        for it in sorted(items, key=lambda x: x.get("position", 0) if isinstance(x, dict) else 0):
+            if not isinstance(it, dict):
+                continue
+            item = it.get("item")
+            name = it.get("name") or (item.get("name") if isinstance(item, dict) else item)
+            if isinstance(name, str) and name.strip():
+                names.append(name.strip())
+        if names:
+            return " > ".join(names)[:400]
+    return None
+
+
 def extract_detail(html: str, soup, url: str) -> dict:
     """Layered extraction: JSON-LD -> embedded state -> DOM text. Records which fired."""
     out: dict = {
@@ -240,7 +267,10 @@ def extract_detail(html: str, soup, url: str) -> dict:
             out["description"] = " ".join(str(desc).split())[:20000]
         img = ld.get("image")
         if isinstance(img, list) and img:
+            out["images_count"] = len(img)
             img = img[0]
+        if isinstance(img, dict):                      # Etsy ships ImageObject{"contentURL": ...}
+            img = img.get("contentURL") or img.get("url")
         if isinstance(img, str):
             out["thumbnail_url"] = img
 
@@ -249,8 +279,10 @@ def extract_detail(html: str, soup, url: str) -> dict:
         "favorites": [r'"num_favorers"\s*:\s*(\d+)', r'"favorers_count"\s*:\s*(\d+)'],
         "listing_review_count": [r'"review_count"\s*:\s*(\d+)'],
         "listing_rating": [r'"rating_average"\s*:\s*([\d.]+)'],
-        "shop_review_count": [r'"shop_review_count"\s*:\s*(\d+)'],
-        "shop_rating": [r'"shop_rating_average"\s*:\s*([\d.]+)'],
+        # verified key on a live listing page: "shop_reviews_count": 15362
+        "shop_review_count": [r'"shop_reviews?_count"\s*:\s*(\d+)'],
+        "shop_rating": [r'"shop_rating_average"\s*:\s*([\d.]+)',
+                        r'"shop_review_average"\s*:\s*([\d.]+)'],
         "variation_count": [r'"variations_count"\s*:\s*(\d+)'],
         "images_count": [r'"image_count"\s*:\s*(\d+)'],
     }
@@ -276,14 +308,33 @@ def extract_detail(html: str, soup, url: str) -> dict:
             out["shop_name"] = " ".join(shop.get_text(" ", strip=True).split())[:120] or None
             href = shop.get("href") or ""
             out["shop_url"] = href.split("?")[0]
-    if out["description"] is None and soup:
+    if soup:
+        # Description: the rendered block is the authority; JSON-LD is the fallback.
         node = (soup.select_one('[data-product-details-description-text-content]')
                 or soup.select_one('[data-id="description-text"]')
                 or soup.select_one("#listing-description"))
         if node:
             out["description_html"] = str(node)
-            out["description"] = node.get_text("\n", strip=True)[:20000]
+            dom_desc = node.get_text("\n", strip=True)[:20000]
+            if dom_desc:
+                out["description"] = dom_desc
             ex["dom"] = True
+
+        # Variations: one <select id="variation-selector-N"> per variation type.
+        vsel = soup.select('select[id^="variation-selector"]')
+        if vsel:
+            out["variation_count"] = sum(len(s.find_all("option")) for s in vsel)
+            ex["dom"] = True
+
+        # Thumbnail fallback: OpenGraph image is always present on listing pages.
+        if not out["thumbnail_url"]:
+            og = soup.find("meta", attrs={"property": "og:image"})
+            if og and og.get("content"):
+                out["thumbnail_url"] = og["content"]
+
+        # Category path from the BreadcrumbList JSON-LD block.
+        if not out["category_path"]:
+            out["category_path"] = _breadcrumb_path(soup)
     out["is_bestseller"] = bool(re.search(r"\bbestseller\b", page_text, re.I))
     out["is_star_seller"] = bool(re.search(r"\bstar seller\b", page_text, re.I))
     out["free_shipping"] = bool(re.search(r"\bfree shipping\b", page_text, re.I))
