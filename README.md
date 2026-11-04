@@ -11,17 +11,37 @@ Research trail: [`docs/research/mintz-channel-findings.md`](docs/research/mintz-
 
 | Layer | State |
 |---|---|
-| Design session | ✅ `CONTEXT.md` glossary + 4 ADRs in `docs/adr/` |
+| Design session | ✅ `CONTEXT.md` glossary + 9 ADRs in `docs/adr/` |
 | Research corpus | ✅ 56/63 channel videos transcribed (Apify, $0.114), mined into `docs/research/mintz-channel-findings.md`; his Etsy scripts read from GitHub |
 | SQLite schema | ✅ `db/schema.sql` — applies clean, WAL, FTS5 |
-| Crawler | ✅ `crawler/etsy_crawl.py` — **validated against live Etsy**: 4 runs, 405 listing rows, zero extraction warnings on the last one |
+| Crawler | ✅ `crawler/etsy_crawl.py` — **validated against live Etsy** at depth 20: 1,493 listings, 100 % field coverage on title/price/favorites/description |
 | Importer | ✅ `db/import_run.py` — verified idempotent (second import skipped) |
-| Dashboard | ✅ running at `http://127.0.0.1:8787` on real data: **1,401 listings / 2,198 snapshots / 23 runs**, 2 keywords |
+| Dashboard | ✅ running at `http://127.0.0.1:8787` on real data: **1,493 listings / 2,782 snapshots / 30 runs**, 2 keywords |
 | GitHub Actions workflow | ✅ deployed to `samarian5/etsy-research` (**public** — free unlimited Actions minutes, ADR 0007); **depth-20 crawl complete: 20/20 pages, 1,289 listings** |
 | Transport security | ✅ queue sealed in the dispatch input, keywords hashed in logs, results sealed per run (`ETSY_ARTIFACT_KEY`) |
 | Self-healing | ✅ `scripts/coverage.py` audits pages from occurrence rows (discovered **and** detailed); `scripts/autopilot.py` syncs and re-queues every hole |
+| Every second day | ✅ `cron: "10 4 */2 * *"` reads `queue.sealed` from the repo — no laptop needed; polished by `scripts/publish_queue.py`, refreshed by the dashboard (ADR 0009) |
+| Movement tracking | ✅ `fav_delta` / `price_delta` between crawls, `Momentum Δ` sort, same columns in the CSV |
 | Hang protection | ✅ per-page `navigate()` deadline (90 s) + stall watchdog (`STALL_MINUTES`, exit 3) + 90-minute job ceiling — a wedged CDP call now costs minutes, not hours (ADR 0008) |
 | Deployment path | ✅ Composio GitHub connection — no PAT anywhere; `scripts/deploy.py` pushes, `scripts/sync.py` pulls |
+
+## Runs every second day, unattended
+
+`cron: "10 4 */2 * *"` in the workflow starts a refresh every second day at 04:10 UTC.
+The queue lives in the repository as `queue.sealed` (AES-256, same key as the
+artifacts), so the schedule needs nothing from this machine:
+
+```bash
+python scripts/publish_queue.py              # re-seal from the keyword table, commit
+python scripts/publish_queue.py --dispatch   # ...and run it now
+python scripts/publish_queue.py --max-depth 3   # lighter recurring pass (top 3 pages)
+python scripts/publish_queue.py --show       # what the cron will crawl next
+```
+
+The dashboard re-publishes that file whenever a keyword is added or its depth changes.
+Because the same listings are re-observed, every result row now carries movement since
+the previous crawl — `+11` favorites, `−0.50` price — with a `Momentum Δ` sort and the
+same columns in the CSV. Decisions: `docs/adr/0009`.
 
 ## Cost model (why the repo is public)
 
