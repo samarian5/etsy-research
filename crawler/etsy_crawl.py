@@ -686,11 +686,13 @@ class Crawl:
         # minutes per blocked listing, 21 minutes to reach the circuit breaker.
         # Two dead attempts are evidence enough: after that, probe once and count
         # the page as blocked so the cold-profile retry can start.
-        # Measured across every blocked run today: **no** in-place escalation has
-        # ever cleared a DataDome block. The block is bound to the IP/session, and
-        # the remedy that does work is the cold-profile retry on a fresh runner.
-        # So the ladder is short: one solve, a short settle, one more, then stop.
-        # The last attempt never naps — there is nothing left to wait for.
+        # Escalation is worth *one* round and no more: run 41771853096 cleared a
+        # search-page challenge on the first attempt after a 45 s settle, while the
+        # earlier 60/120/180 s ladder spent 4.5 minutes per page and never cleared a
+        # listing-level block. The block that survives is bound to the IP/session,
+        # and the remedy that works is the cold-profile retry on a fresh runner.
+        # So: one solve, a short settle, one more, then stop. The last attempt never
+        # naps — there is nothing left to wait for.
         if self.solve_failures >= 2:
             print(f"[crawl] solver has failed {self.solve_failures}x this run — "
                   f"not escalating on {page_label}", flush=True)
