@@ -79,9 +79,15 @@ board editable from any browser.
                     └──── 4 token-gated RPCs ┘   add / pause / remove keyword, star
 ```
 
-* `cron "0 */2 * * *"` — twelve slices a day, each one keyword-pair of pages. A slice
+* `cron "17 */2 * * *"` — twelve slices a day, each one keyword-pair of pages. A slice
   takes 14–17 min, so runs never overlap; a failed slice is retried by the next tick
-  because `next_page` only advances on a clean run.
+  because `next_page` only advances on a clean run. The `:17` matters: GitHub delays
+  schedules at the top of the hour.
+* **GitHub's own scheduler never fired for this repo**, so a systemd timer on the
+  always-on laptop calls `scripts/dispatch_slice.py` at `:27` of every even hour to
+  trigger the same workflow. The script refuses to dispatch while a slice is running
+  or queued, so single-flight holds even with two triggers. If GitHub's cron starts
+  working, the guard simply makes the second trigger a no-op.
 * **Queue:** `/web` has an "Add to queue" box. A new keyword is picked up within two
   hours, no commit and no dispatch.
 * **Writes need a token.** The browser holds only the anon key, which RLS restricts to
