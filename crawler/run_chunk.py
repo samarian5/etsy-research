@@ -61,7 +61,7 @@ def advance(item: dict, rest: list[dict], pages_per_run: int, page_to: int,
             # are bound to the IP/session, so a retry elsewhere is the remedy that
             # actually works (measured: 2 of 3 blocks today cleared on the retry).
             # MAX_BLOCK_RETRIES caps it so a genuinely blocked keyword still stops.
-            if int(item.get("attempts") or 0) < int(os.environ.get("MAX_BLOCK_RETRIES") or 2):
+            if int(item.get("attempts") or 0) < int(os.environ.get("MAX_BLOCK_RETRIES") or 3):
                 retry = {**item, "attempts": int(item.get("attempts") or 0) + 1}
                 return ({"items": [retry, *rest], "pages_per_run": pages_per_run,
                          "profile": "cold"},
