@@ -47,7 +47,7 @@ jobs:
       QUEUE_IN: ${{ inputs.queue }}
       ETSY_ARTIFACT_KEY: ${{ secrets.ETSY_ARTIFACT_KEY }}
       REDACT_KEYWORDS: "1"    # public repo: logs show kw-<hash>, not the keyword
-      FAST: ${{ inputs.fast || 'true' }}
+      FAST: ${{ inputs.fast || 'false' }}
       PROFILE_MODE: ${{ inputs.profile || 'warm' }}
       COOLDOWN_SECONDS: "300"   # breathe between chunks: a flagged IP needs the gap
       STALL_MINUTES: "10"       # no progress for this long => dump stacks and exit
