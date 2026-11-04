@@ -108,6 +108,12 @@ board editable from any browser.
 Measured ingest: **3,168 historical observations → 1,980 rows / 1,637 listings in ~2 min**
 (127 batched calls of 25), and a full 2-page slice writes 60–370 rows in seconds.
 
+First live slice (run `41850990686`, 2026-11-04): claimed `tshirt` pages 1–2, crawled for
+**14 minutes**, wrote **107 rows / 107 observations** (+48 listings new to the store), hit
+**1 challenge**, advanced the queue to page 3, and the board showed it without a redeploy.
+A daily budget of 24 search pages is enforced inside `claim_slice()`, so the 2-hour cadence
+cannot quietly turn into hammering — raise it in `settings` if you want more.
+
 ## Runs every second day, unattended (legacy artifact path)
 
 `cron: "10 4 */2 * *"` in the workflow starts a refresh every second day at 04:10 UTC.
