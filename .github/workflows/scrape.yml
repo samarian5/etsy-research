@@ -183,7 +183,10 @@ jobs:
 
       # ── the chain: keep working until the queue is empty or a chunk fails ──
       - name: Cool down before chaining
-        if: success()
+        # A chunk that stopped on a block exits non-zero *on purpose*; the queue's
+        # cold-profile retry only happens if this step still runs. Measured
+        # 2026-11-04 (run 41760485370): success() here silently killed the chain.
+        if: always() && !cancelled()
         run: |
           if [ -f out/next_queue.json ]; then
             echo "sleeping ${COOLDOWN_SECONDS}s before the next chunk"
@@ -193,7 +196,7 @@ jobs:
           fi
 
       - name: Dispatch next chunk
-        if: success()
+        if: always() && !cancelled()
         run: |
           python - <<'EOF'
           import json, os, urllib.request
