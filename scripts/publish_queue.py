@@ -97,6 +97,8 @@ def publish(queue: dict, dry_run: bool = False) -> dict:
     if sha:
         payload["sha"] = sha
     r = _call("GITHUB_CREATE_OR_UPDATE_FILE_CONTENTS", payload)
+    if r.get("successful"):
+        Path(QUEUE_FILE).write_text(sealed)   # keep the local copy authoritative too
     return {"sealed_bytes": len(sealed), "committed": bool(r.get("successful")),
             "error": r.get("error")}
 
