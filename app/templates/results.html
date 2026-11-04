@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}Products · Etsy Research{% endblock %}
+{% block body %}
+
+<form class="filters" id="filters"
+      hx-get="/results/cards" hx-target="#cards" hx-swap="innerHTML"
+      hx-trigger="change, keyup changed delay:320ms from:input[name='q'], keyup changed delay:500ms from:input[name='min_favorites'], keyup changed delay:500ms from:input[name='min_reviews']"
+      hx-include="closest form">
+
+  <div class="filters-row">
+    <label class="field grow search-field">
+      <span>Search</span>
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="6.8" cy="6.8" r="4.6" stroke="currentColor" stroke-width="1.6"/>
+        <path d="m10.4 10.4 3.1 3.1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      <input name="q" value="{{ params.q }}" placeholder="Search titles, keywords, or shop names…"
+             autocomplete="off">
+    </label>
+
+    <label class="field w-kw">
+      <span>Research keyword</span>
+      <select name="keyword">
+        <option value="">All keywords</option>
+        {% for k in facets.keywords %}
+        <option value="{{ k.phrase }}" {{ 'selected' if params.keyword == k.phrase else '' }}>
+          {{ k.phrase }} ({{ '{:,}'.format(k.n) }})
+        </option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="field w-sort">
+      <span>Sort by</span>
+      <select name="sort">
+        {% for val, label in [('favorites','Most favorites'),('reviews','Most reviews'),
+                              ('momentum','Biggest movers'),('rank','Best rank'),
+                              ('price_desc','Price: high to low'),('price_asc','Price: low to high'),
+                              ('newest','Recently captured'),('title','Title A–Z')] %}
+        <option value="{{ val }}" {{ 'selected' if params.sort == val else '' }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="field w-price">
+      <span>Price</span>
+      <select name="band">
+        <option value="">Any price</option>
+        {% for val, label in [('under15','Under $15'),('15to30','$15 – $30'),
+                              ('30to60','$30 – $60'),('over60','$60 and up')] %}
+        <option value="{{ val }}" {{ 'selected' if params.band == val else '' }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="field w-status">
+      <span>Status</span>
+      <select name="status">
+        <option value="">Any status</option>
+        <option value="rising" {{ 'selected' if params.status == 'rising' else '' }}>
+          Gaining favorites ({{ facets.counts.rising }})</option>
+        <option value="price_drop" {{ 'selected' if params.status == 'price_drop' else '' }}>
+          Price dropped ({{ facets.counts.price_drop }})</option>
+        <option value="bestseller" {{ 'selected' if params.status == 'bestseller' else '' }}>
+          Bestseller ({{ facets.counts.bestseller }})</option>
+        <option value="star" {{ 'selected' if params.status == 'star' else '' }}>
+          Star seller ({{ facets.counts.star }})</option>
+        <option value="on_sale" {{ 'selected' if params.status == 'on_sale' else '' }}>
+          On sale ({{ facets.counts.on_sale }})</option>
+        <option value="free_shipping" {{ 'selected' if params.status == 'free_shipping' else '' }}>
+          Free shipping ({{ facets.counts.free_shipping }})</option>
+        <option value="shortlisted" {{ 'selected' if params.status == 'shortlisted' else '' }}>
+          Shortlisted ({{ facets.counts.shortlisted }})</option>
+        <option value="no_description" {{ 'selected' if params.status == 'no_description' else '' }}>
+          Missing description</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="filters-row">
+    <label class="check">
+      <input type="checkbox" name="seen_twice" value="1"
+             {{ 'checked' if params.seen_twice }}>
+      Include only listings seen on 2+ crawls ({{ facets.counts.seen_twice }})
+    </label>
+
+    <label class="field w-num">
+      <span>Min. favorites</span>
+      <input name="min_favorites" value="{{ params.min_favorites }}" inputmode="numeric"
+             placeholder="0" autocomplete="off">
+    </label>
+
+    <label class="field w-num">
+      <span>Min. reviews</span>
+      <input name="min_reviews" value="{{ params.min_reviews }}" inputmode="numeric"
+             placeholder="0" autocomplete="off">
+    </label>
+
+    <div class="actions">
+      <a class="btn sm" href="/export.csv?{{ qs }}">Export CSV</a>
+      <a class="btn sm ghost" href="/results">Reset filters</a>
+    </div>
+  </div>
+</form>
+
+<div id="cards">
+  {% include "_cards.html" %}
+</div>
+
+{% endblock %}
