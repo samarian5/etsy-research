@@ -44,6 +44,26 @@ class NavigationTimeoutTests(unittest.TestCase):
         self.assertIsNone(nxt)
 
 
+class SessionBudgetTests(unittest.TestCase):
+    """Measured 2026-11-04: ~150 page loads, then DataDome refuses every listing.
+    A slice must fit inside what one browser session survives."""
+
+    def test_a_bigger_slice_is_clamped_to_the_session_budget(self):
+        import sys
+        sys.path.insert(0, "crawler")
+        import run_chunk
+        self.assertEqual(run_chunk.session_pages(8, page_loads=130), 2)
+        self.assertEqual(run_chunk.session_pages(5, page_loads=130), 2)
+        self.assertEqual(run_chunk.session_pages(2, page_loads=130), 2)
+        self.assertEqual(run_chunk.session_pages(1, page_loads=130), 1)
+
+    def test_a_slow_mode_budget_still_allows_at_least_one_page(self):
+        import sys
+        sys.path.insert(0, "crawler")
+        import run_chunk
+        self.assertEqual(run_chunk.session_pages(5, page_loads=10), 1)
+
+
 class WorkflowShapeTests(unittest.TestCase):
     """A workflow GitHub cannot parse fails as "a run with zero jobs", 5 s apart —
     which is how eight dead runs appeared on 2026-11-04. Parse it before pushing."""
