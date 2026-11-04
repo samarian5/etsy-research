@@ -16,7 +16,7 @@ Research trail: [`docs/research/mintz-channel-findings.md`](docs/research/mintz-
 | SQLite schema | ✅ `db/schema.sql` — applies clean, WAL, FTS5 |
 | Crawler | ✅ `crawler/etsy_crawl.py` — **validated against live Etsy** at depth 20: 1,493 listings, 100 % field coverage on title/price/favorites/description |
 | Importer | ✅ `db/import_run.py` — verified idempotent (second import skipped) |
-| Dashboard | ✅ running at `http://127.0.0.1:8787` on real data: **1,493 listings / 2,782 snapshots / 30 runs**, 2 keywords |
+| Dashboard | ✅ `http://pc.tail2881d9.ts.net:8787` (Tailscale) — card grid, 5-up, filters with live counts, image cache, price/favorite movement, shortlist |
 | GitHub Actions workflow | ✅ deployed to `samarian5/etsy-research` (**public** — free unlimited Actions minutes, ADR 0007); **depth-20 crawl complete: 20/20 pages, 1,289 listings** |
 | Transport security | ✅ queue sealed in the dispatch input, keywords hashed in logs, results sealed per run (`ETSY_ARTIFACT_KEY`) |
 | Self-healing | ✅ `scripts/coverage.py` audits pages from occurrence rows (discovered **and** detailed); `scripts/autopilot.py` syncs and re-queues every hole |
@@ -24,6 +24,40 @@ Research trail: [`docs/research/mintz-channel-findings.md`](docs/research/mintz-
 | Movement tracking | ✅ `fav_delta` / `price_delta` between crawls, `Momentum Δ` sort, same columns in the CSV |
 | Hang protection | ✅ per-page `navigate()` deadline (90 s) + stall watchdog (`STALL_MINUTES`, exit 3) + 90-minute job ceiling — a wedged CDP call now costs minutes, not hours (ADR 0008) |
 | Deployment path | ✅ Composio GitHub connection — no PAT anywhere; `scripts/deploy.py` pushes, `scripts/sync.py` pulls |
+
+## The dashboard
+
+Two pages, no build step, no JS framework — Jinja + HTMX + one hand-written stylesheet.
+
+**Products** (`/results`) is a card grid: image, keyword chip with rank page and crawl
+count, two-line clamped title, price with strike-through original and % off, reviews and
+favorites, then `Etsy ↗` and `View details`.
+
+- Filter row 1: search (FTS5, debounced), research keyword, sort (favorites, reviews,
+  **biggest movers**, best rank, price, recency), price band, status.
+- Filter row 2: "seen on 2+ crawls" checkbox, min favorites, min reviews, export, reset.
+- Every dropdown shows its own result count (`Gaining favorites (129)`), computed in one
+  pass over the latest-snapshot CTE (~112 ms) and cached 30 s.
+- Filtering is HTMX: the grid swaps in place, `history.replaceState` keeps the URL
+  shareable, and the Export link is re-pointed at the new query — otherwise "Export CSV"
+  would quietly download the unfiltered set.
+- Badges over the image: `Bestseller`, `Sale` (with −% in the price row), `Star seller`;
+  top-right shows `♥ +61` — favorites gained since the previous crawl.
+- Thumbnails are served from `data/thumbs/` by `/thumb/{id}`: Etsy's CDN returns **WebP**
+  (11 KB) when the Accept header allows it and JPEG (120 KB) otherwise, so the type is
+  sniffed from magic bytes and cached on disk. A 404 hides the image instead of showing
+  a broken icon.
+
+**Keywords** (`/`) is the control room: KPI strip, tracked keywords with depth editing and
+`Run now`, add-keywords form, run-everything, and the crawl history table.
+
+**Detail drawer** slides in from the right (Esc closes, body scroll locked): hero image,
+shop with ratings, price/favorites with deltas since the last crawl, crawl count, a
+favorites-over-time sparkline, and the full description.
+
+The whole grid was measured, not eyeballed: 5 columns of ~322 px at 1832 px wide
+(matching the reference), 3 at 1024, 2 at 430, zero horizontal overflow, uniform card
+heights, and muted text at 4.58:1 contrast against the card.
 
 ## Runs every second day, unattended
 
