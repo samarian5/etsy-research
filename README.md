@@ -59,7 +59,56 @@ The whole grid was measured, not eyeballed: 5 columns of ~322 px at 1832 px wide
 (matching the reference), 3 at 1024, 2 at 430, zero horizontal overflow, uniform card
 heights, and muted text at 4.58:1 contrast against the card.
 
-## Runs every second day, unattended
+## Hosted board + Supabase (current path)
+
+**Live: <https://samarian5.github.io/etsy-research/>**
+
+The SQLite dashboard above still runs on the laptop, but the system of record is now a
+Postgres database on Supabase, and the queue lives there too — which is what makes the
+board editable from any browser.
+
+```
+ every 2 h ──► GitHub Actions (Xvfb, headed Chrome)
+                    │  claim_slice()      ← the queue lives in Postgres
+                    ▼
+                crawl 2 pages ──► ingest_batch()  (listings + observations, deltas
+                    │                               computed server-side)
+                    ▼
+              Supabase Postgres  ──►  GitHub Pages SPA (anon key, RLS = SELECT only)
+                    ▲                        │
+                    └──── 4 token-gated RPCs ┘   add / pause / remove keyword, star
+```
+
+* `cron "0 */2 * * *"` — twelve slices a day, each one keyword-pair of pages. A slice
+  takes 14–17 min, so runs never overlap; a failed slice is retried by the next tick
+  because `next_page` only advances on a clean run.
+* **Queue:** `/web` has an "Add to queue" box. A new keyword is picked up within two
+  hours, no commit and no dispatch.
+* **Writes need a token.** The browser holds only the anon key, which RLS restricts to
+  `SELECT`. Adding a keyword calls `add_keyword(p_token, …)`, which checks a SHA-256
+  hash stored in `settings`. The token is `SUPABASE_WRITE_TOKEN` in `.env`; the board
+  asks for it once and keeps it in `localStorage`.
+* **Schema:** `db/supabase/0001_init.sql` (tables, RPCs, RLS) and `0002_fav_gain.sql`
+  (the stored momentum column PostgREST cannot express as a filter).
+* **Migration:** `python scripts/migrate_sqlite_to_supa.py` replays local history
+  chronologically, so `prev_favorites` / `prev_price` end up meaningful.
+* **Publish the board:** `python scripts/deploy_pages.py` — assembles an orphan
+  `gh-pages` branch through the Git database API (Pages only serves `/` or `/docs`,
+  and `/docs` already holds the ADRs).
+
+### Supabase free tier — what actually constrains it
+
+| Limit | Value | Consequence |
+|---|---|---|
+| Database | 500 MB | `prune_snapshots()` keeps a week of full history, then one row per day per listing |
+| Project pause | 7 days idle | a run every 2 h keeps it awake |
+| Egress | 5 GB/month | the board reads ~40 KB per page view; images come from Etsy's CDN, not storage |
+| Writes | unlimited (row-based pricing) | two runs/day ≈ 3k rows is far below any threshold |
+
+Measured ingest: **3,168 historical observations → 1,980 rows / 1,637 listings in ~2 min**
+(127 batched calls of 25), and a full 2-page slice writes 60–370 rows in seconds.
+
+## Runs every second day, unattended (legacy artifact path)
 
 `cron: "10 4 */2 * *"` in the workflow starts a refresh every second day at 04:10 UTC.
 The queue lives in the repository as `queue.sealed` (AES-256, same key as the
