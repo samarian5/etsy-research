@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% block title %}Keywords · Etsy Research{% endblock %}
+{% block body %}
+
+<div class="kpis">
+  <div class="kpi accent">
+    <b>{{ '{:,}'.format(stats.listings or 0) }}</b><span>listings tracked</span>
+  </div>
+  <div class="kpi">
+    <b>{{ '{:,}'.format(stats.snapshots or 0) }}</b><span>observations</span>
+  </div>
+  <div class="kpi">
+    <b>{{ '{:,}'.format(stats.runs or 0) }}</b><span>crawl runs</span>
+  </div>
+  <div class="kpi">
+    <b>{{ '{:,}'.format(stats.shortlisted or 0) }}</b><span>shortlisted</span>
+  </div>
+  <div class="kpi">
+    <b>{{ stats.last_capture[:10] if stats.last_capture else '—' }}</b>
+    <span>last capture</span>
+  </div>
+</div>
+
+<div class="split">
+  <div>
+    <div class="section-head">
+      <h2>Tracked keywords</h2>
+      <span class="muted" style="font-size:12.5px">
+        {{ keywords|length }} keyword{{ '' if keywords|length == 1 else 's' }}
+      </span>
+      <span class="spacer"></span>
+      <a class="btn sm" href="/results">Browse products →</a>
+    </div>
+
+    <div class="panel">
+      {% if keywords %}
+      <div class="kw-list">
+        {% for k in keywords %}
+        <div class="kw-row">
+          <div class="kw-main">
+            <div class="kw-phrase">{{ k.phrase }}</div>
+            <div class="kw-meta">
+              <span>depth {{ k.depth }}</span>
+              <span class="sep"></span>
+              <span>{{ '{:,}'.format(k.total_listings or 0) }} listings</span>
+              <span class="sep"></span>
+              <span>{{ k.run_count }} run{{ '' if k.run_count == 1 else 's' }}</span>
+              {% if k.last_status %}
+              <span class="sep"></span>
+              <span class="pill {{ 'warn' if k.last_status not in ('succeeded', 'imported', 'partial') else 'plain' }}">
+                {{ k.last_status }}</span>
+              {% endif %}
+              {% if k.last_run_at %}
+              <span class="sep"></span>
+              <span>{{ k.last_run_at[:16].replace('T', ' ') }}</span>
+              {% endif %}
+            </div>
+          </div>
+          <div class="kw-actions">
+            <form method="post" action="/keywords/{{ k.id }}/depth">
+              <input name="depth" type="number" min="1" max="100" value="{{ k.depth }}"
+                     title="Crawl depth (pages)" aria-label="Depth for {{ k.phrase }}">
+            </form>
+            <a class="btn sm ghost" href="/results?keyword={{ k.phrase|urlencode }}">View</a>
+            <form method="post" action="/keywords/{{ k.id }}/run">
+              <button class="btn sm primary" type="submit" {{ '' if configured else 'disabled' }}
+                      title="{{ 'Dispatch a crawl' if configured else 'GitHub not configured' }}">
+                Run now
+              </button>
+            </form>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty">
+        <b>No keywords yet</b>
+        Add one on the right, then press <code>Run now</code>.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div>
+    <div class="section-head"><h2>Add keywords</h2></div>
+    <form class="panel panel-pad" method="post" action="/keywords"
+          style="display:flex; flex-direction:column; gap:14px">
+      <label class="field">
+        <span>Search phrases</span>
+        <textarea name="phrase" rows="4" required
+                  placeholder="t-shirt&#10;personalized mug&#10;wedding gift"></textarea>
+      </label>
+      <div style="display:flex; gap:12px; align-items:flex-end">
+        <label class="field" style="width:110px">
+          <span>Depth</span>
+          <input name="depth" type="number" min="1" max="100" value="20">
+        </label>
+        <button class="btn primary" type="submit">Add keyword</button>
+      </div>
+      <p class="muted" style="font-size:12px; margin:0">
+        One per line, or comma separated. Depth is the page ceiling for that keyword (1–100);
+        the crawler stops earlier when a page yields nothing new.
+      </p>
+    </form>
+
+    <div class="section-head" style="margin-top:26px"><h2>Run everything</h2></div>
+    <form class="panel panel-pad" method="post" action="/run-queue"
+          style="display:flex; flex-direction:column; gap:14px">
+      <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap">
+        <label class="field" style="width:132px">
+          <span>Pages per run</span>
+          <input name="pages_per_run" type="number" min="1" max="20" value="3">
+        </label>
+        <label class="field" style="width:150px">
+          <span>Browser profile</span>
+          <select name="profile">
+            <option value="warm">warm (cached)</option>
+            <option value="cold">cold (fresh)</option>
+          </select>
+        </label>
+        <button class="btn primary" type="submit" {{ '' if configured else 'disabled' }}>
+          Run all keywords
+        </button>
+      </div>
+      <p class="muted" style="font-size:12px; margin:0">
+        Queues every enabled keyword and chains chunk after chunk on GitHub Actions until the
+        queue is empty. The same queue runs on its own every second day.
+      </p>
+    </form>
+  </div>
+</div>
+
+<div class="section-head" style="margin-top:34px">
+  <h2>Recent crawls</h2>
+  <span class="muted" style="font-size:12.5px">newest first</span>
+  <span class="spacer"></span>
+  <form method="post" action="/sync">
+    <button class="btn sm" type="submit" {{ '' if configured else 'disabled' }}>
+      Sync from GitHub
+    </button>
+  </form>
+</div>
+
+<div class="panel" style="overflow:hidden">
+  {% if runs %}
+  <table>
+    <thead>
+      <tr>
+        <th>Keyword</th><th>Status</th><th class="num">Pages</th><th class="num">Listings</th>
+        <th class="num">Blocked</th><th>Started</th><th>Finished</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in runs %}
+      <tr>
+        <td style="font-weight:550">{{ r.phrase }}</td>
+        <td>
+          <span class="pill {{ 'warn' if r.status not in ('succeeded', 'imported') else 'plain' }}">
+            {{ r.status }}
+          </span>
+        </td>
+        <td class="num">{{ r.pages_done }}</td>
+        <td class="num">{{ '{:,}'.format(r.unique_listings or 0) }}</td>
+        <td class="num">{{ r.challenges or 0 }}</td>
+        <td class="muted">{{ (r.started_at or '')[:16].replace('T', ' ') }}</td>
+        <td class="muted">{{ (r.finished_at or '')[:16].replace('T', ' ') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">
+    <b>No crawls imported yet</b>
+    Run one, then press <code>Sync from GitHub</code>.
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}
