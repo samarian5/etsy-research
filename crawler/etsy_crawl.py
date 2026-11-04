@@ -20,6 +20,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import faulthandler
 import gzip
 import json
 import os
@@ -441,6 +442,15 @@ class Crawl:
         self.challenges = 0
         self.consecutive_blocks = 0
         self.stopped_reason = None
+        # Stall protection. SeleniumBase's CDP get() retries navigation with no
+        # timeout when asyncio.wait_for's cancellation surfaces as RuntimeError
+        # (vendor/sb_cdp.py, get(): "except RuntimeError: self.loop.run_until_complete(
+        # self.page.get(url))"). That path produced a silent 4h12m hang on
+        # 2026-11-04, so navigation gets its own deadline and the process has a
+        # watchdog that cannot be blocked by it.
+        self.last_progress = time.time()
+        self.progress_note = "startup"
+        self.nav_timeouts = 0
         self.pages_done = 0
         self.started_at = time.time()
         # A session that keeps getting challenged is not worth thousands of retries:
@@ -529,6 +539,68 @@ class Crawl:
             return False
 
     # -- pacing -------------------------------------------------------------
+    # -- liveness -----------------------------------------------------------
+    def touch(self, note: str | None = None) -> None:
+        """Record forward progress; the watchdog reads this."""
+        self.last_progress = time.time()
+        if note:
+            self.progress_note = note
+
+    def navigate(self, sb, url: str, label: str) -> bool:
+        """goto() with a hard deadline, because the upstream call can hang forever.
+
+        Returns False when the navigation timed out or raised, so callers can treat
+        it like a failed page instead of waiting for it.
+        """
+        timeout = float(os.environ.get("NAV_TIMEOUT") or 90)
+        done: dict = {}
+
+        def _go():
+            try:
+                sb.goto(url)
+                done["ok"] = True
+            except Exception as e:  # noqa: BLE001 - any failure is a failed navigation
+                done["err"] = repr(e)[:200]
+
+        t = threading.Thread(target=_go, daemon=True)
+        t.start()
+        t.join(timeout)
+        if t.is_alive():
+            self.nav_timeouts += 1
+            print(f"[crawl] navigation exceeded {timeout:.0f}s on {label} — abandoning this page",
+                  flush=True)
+            return False
+        if done.get("err"):
+            self.nav_timeouts += 1
+            print(f"[crawl] navigation error on {label}: {done['err']}", flush=True)
+            return False
+        self.touch(label)
+        return True
+
+    def start_watchdog(self) -> None:
+        """Exit the process if nothing has progressed for STALL_MINUTES.
+
+        A daemon thread, dumping every stack before it exits, so the artifact step
+        still runs (it is `if: always()`) and the log says where things stopped.
+        Better a short failed chunk than a five-hour one.
+        """
+        limit = float(os.environ.get("STALL_MINUTES") or 10) * 60
+
+        def _watch():
+            while True:
+                time.sleep(5)
+                idle = time.time() - self.last_progress
+                if idle > limit:
+                    print(f"[crawl] WATCHDOG: no progress for {idle / 60:.0f} min "
+                          f"(last: {self.progress_note}) — dumping stacks and exiting "
+                          f"so the artifact still uploads", flush=True)
+                    faulthandler.dump_traceback()
+                    sys.stdout.flush()
+                    sys.stderr.flush()
+                    os._exit(3)
+
+        threading.Thread(target=_watch, daemon=True, name="stall-watchdog").start()
+
     def delay(self, lo: float = 1.5, hi: float = 3.0):
         """Politeness pause. --fast halves it but never drops below 0.6s."""
         if self.args.fast:
@@ -649,11 +721,13 @@ class Crawl:
             url = SEARCH_URL.format(q=quote_plus(kw), page=page_no)
             self.budget_left -= 1
             print(f"[crawl] search page {page_no}/{last}: {url}", flush=True)
-            try:
-                sb.goto(url)
-            except Exception as e:
-                print(f"[crawl] goto failed: {e}", flush=True)
-                break
+            if not self.navigate(sb, url, f"search p{page_no}"):
+                if self.nav_timeouts >= 3:
+                    print("[crawl] 3 failed navigations — stopping instead of burning the chunk",
+                          flush=True)
+                    self.stopped_reason = "timeout"
+                    break
+                continue
             self.delay(1.0, 1.8)
             if not self.guard(sb, f"search p{page_no}"):
                 print(f"[crawl] blocked, stopping discovery at page {page_no}", flush=True)
@@ -680,6 +754,7 @@ class Crawl:
             for c in new:
                 self.seen[c["listing_id"]] = c
             self.pages_done += 1
+            self.touch(f"discovered page {page_no}")
             print(f"[crawl] page {page_no}: {len(cards)} cards, {len(new)} new "
                   f"(total {len(self.seen)})", flush=True)
             if not new:
@@ -701,10 +776,12 @@ class Crawl:
                 break
             lid = card["listing_id"]
             self.budget_left -= 1
-            try:
-                sb.goto(card["url"])
-            except Exception as e:
-                print(f"[crawl] detail goto failed {lid}: {e}", flush=True)
+            if not self.navigate(sb, card["url"], f"listing {lid}"):
+                if self.nav_timeouts >= 3:
+                    print("[crawl] 3 failed navigations — stopping the detail pass, "
+                          "keeping collected rows", flush=True)
+                    self.stopped_reason = "timeout"
+                    break
                 continue
             self.delay(0.8, 1.5)
             if not self.guard(sb, f"listing {lid}"):
@@ -729,6 +806,7 @@ class Crawl:
                 with gzip.open(self.out / "html" / f"detail_{lid}.html.gz", "wt",
                                encoding="utf-8") as fh:
                     fh.write(html)
+            self.touch(f"listing {i}/{len(items)}")
             payload_path = f"payloads/{lid}.json.gz"
             with gzip.open(self.out / payload_path, "wt", encoding="utf-8") as fh:
                 json.dump(build_payload(html, soup, detail, card["url"]), fh,
@@ -783,9 +861,11 @@ class Crawl:
     def run(self):
         sb = None
         status, error = "succeeded", None
+        self.start_watchdog()
         try:
             sb = self.launch()
-            sb.goto("https://www.etsy.com/")
+            if not self.navigate(sb, "https://www.etsy.com/", "home"):
+                raise RuntimeError("home page navigation failed (deadline or error)")
             human_delay(1.5, 2.5)
             self.guard(sb, "home")
             self.discover(sb)
@@ -803,6 +883,8 @@ class Crawl:
                 pass
             self.results_fh.close()
             if status == "succeeded" and self.stopped_reason:
+                if self.stopped_reason == "timeout":
+                    print("[crawl] stopped on repeated navigation deadlines", flush=True)
                 status = "aborted"
                 error = f"stopped early: {self.stopped_reason} (rows kept)"
             self.write_meta(status, error)
