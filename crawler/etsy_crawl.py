@@ -505,6 +505,10 @@ class Crawl:
     BLOCK_URLS = MEDIA_URLS + TRACKER_URLS
 
     def block_heavy_resources(self, chrome) -> None:
+        if (os.environ.get("BLOCK_MEDIA") or "1") == "0":
+            print("[crawl] media blocking disabled (BLOCK_MEDIA=0) — slower, more human",
+                  flush=True)
+            return
         """Best-effort CDP Network.setBlockedURLs. Never fatal: a missed call only
         means slower pages, and page loads must keep working on any SeleniumBase."""
         self._chrome = chrome
