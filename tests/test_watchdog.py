@@ -81,6 +81,55 @@ class NavigateTests(unittest.TestCase):
         self.assertIn("RESULT False 1", r.stdout)
 
 
+class FetchSourceTests(unittest.TestCase):
+    def test_wedged_page_source_is_skipped(self):
+        """The observed hang was inside the CDP read, not the navigation."""
+        r = _run(f"""
+            import sys, time
+            sys.path.insert(0, r"{CRAWLER}")
+            import etsy_crawl
+
+            class Args:
+                keyword = "tshirt"; depth = 1; pages_from = 1; pages_to = 1
+                max_requests = 100; save_detail_html = 0; fast = True
+                run_id = "test"; started_at = "now"; out = "out"
+                user_data_dir = "p"; browser_executable_path = None; proxy = None
+                skip_ids = ""
+
+            class SB:
+                def get_page_source(self):
+                    time.sleep(300)
+
+            crawl = etsy_crawl.Crawl(Args())
+            print("RESULT", crawl.fetch_source(SB(), "listing 1"), crawl.nav_timeouts)
+        """, env={"NAV_TIMEOUT": "2"})
+        self.assertIn("exceeded 2s", r.stdout)
+        self.assertIn("RESULT None 1", r.stdout)
+        self.assertEqual(r.returncode, 0)
+
+    def test_healthy_page_source_is_returned(self):
+        r = _run(f"""
+            import sys
+            sys.path.insert(0, r"{CRAWLER}")
+            import etsy_crawl
+
+            class Args:
+                keyword = "tshirt"; depth = 1; pages_from = 1; pages_to = 1
+                max_requests = 100; save_detail_html = 0; fast = True
+                run_id = "test"; started_at = "now"; out = "out"
+                user_data_dir = "p"; browser_executable_path = None; proxy = None
+                skip_ids = ""
+
+            class SB:
+                def get_page_source(self):
+                    return "<html>ok</html>"
+
+            crawl = etsy_crawl.Crawl(Args())
+            print("RESULT", crawl.fetch_source(SB(), "p1"), crawl.nav_timeouts)
+        """, env={"NAV_TIMEOUT": "5"})
+        self.assertIn("RESULT <html>ok</html> 0", r.stdout)
+
+
 class WatchdogTests(unittest.TestCase):
     def test_watchdog_exits_the_process_when_nothing_progresses(self):
         r = _run(f"""
