@@ -195,30 +195,25 @@ jobs:
           path: out.tar.gz.enc
 
       # ── the chain: keep working until the queue is empty or a chunk fails ──
+      - name: Choose the cooldown
+        id: cool
+        if: always() && !cancelled()
+        # A retry after a block waits longer: the point is to land on a different
+        # runner IP *and* let the flagged session go cold, not to retry in place.
+        run: |
+          if [ ! -f out/next_queue.json ]; then
+            echo "seconds=0" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          SECS=$(python -c "import json;q=json.load(open('out/next_queue.json'));a=max([int(i.get('attempts') or 0) for i in (q.get('items') or [{}])] or [0]);print(900 if a>=1 else 300)")
+          echo "seconds=$SECS" >> "$GITHUB_OUTPUT"
+          echo "next chunk waits ${SECS}s"
+
       - name: Cool down before chaining
         # A chunk that stopped on a block exits non-zero *on purpose*; the queue's
         # cold-profile retry only happens if this step still runs. Measured
         # 2026-11-04 (run 41760485370): success() here silently killed the chain.
         if: always() && !cancelled()
-        run: |
-          if [ -f out/next_queue.json ]; then
-            # A retry after a block waits longer: the point is to land on a different
-            # runner IP *and* let the flagged session go cold, not to retry in place.
-            SECS=$(python - <<'EOF'
-import json
-try:
-    q = json.load(open("out/next_queue.json"))
-    attempts = max([int(i.get("attempts") or 0) for i in q.get("items") or [{}]] or [0])
-except Exception:
-    attempts = 0
-print(900 if attempts >= 1 else 300)
-EOF
-)
-            echo "sleeping ${SECS}s before the next chunk (attempt ${attempts:-0})"
-            sleep "$SECS"
-          else
-            echo "queue finished — no cooldown needed"
-          fi
+        run: sleep "${{ steps.cool.outputs.seconds }}"
 
       - name: Dispatch next chunk
         if: always() && !cancelled()
