@@ -36,7 +36,7 @@ QUEUE_FILE = "queue.sealed"
 OWNER, REPO, BRANCH = "samarian5", "etsy-research", "main"
 
 
-def build_queue(db: str, max_depth: int = 0, pages_per_run: int = 5,
+def build_queue(db: str, max_depth: int = 0, pages_per_run: int = 2,
                 keyword: str | None = None) -> dict:
     """One item per enabled keyword, each starting at page 1.
 
@@ -113,7 +113,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default=os.environ.get("ETSY_DB", str(ROOT / "data" / "etsy.db")))
     ap.add_argument("--max-depth", type=int, default=0)
-    ap.add_argument("--pages-per-run", type=int, default=5)
+    ap.add_argument("--pages-per-run", type=int, default=2)
     ap.add_argument("--keyword")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--dispatch", action="store_true")
