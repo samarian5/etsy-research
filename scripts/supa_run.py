@@ -83,17 +83,26 @@ def crawl(slice_: dict, run_id: str) -> tuple[int, dict, list[dict]]:
     return rc, meta, rows
 
 
-def recent_failures(supa: Supa, keyword: str, hours: int = 12) -> int:
-    """Consecutive failed slices for this keyword. Four in a row is not bad luck:
-    it is the site refusing this keyword's URL pattern, or a dead runner pool."""
+def consecutive_failures(supa: Supa, keyword: str) -> int:
+    """How many of the most recent slices failed, counting back from now.
+
+    Counting any failure in a window would park a keyword because of a block two
+    days ago; only an unbroken streak means the site is refusing this keyword.
+    """
     try:
         rows = supa._call(
             "GET",
             "/rest/v1/runs?select=status&keyword=eq."
-            f"{_quote(keyword)}&status=in.(aborted,failed)&order=started_at.desc&limit=10")
-        return len(rows or [])
+            f"{_quote(keyword)}&order=started_at.desc&limit=6")
     except SupaError:
         return 0
+    streak = 0
+    for r in rows or []:
+        if (r or {}).get("status") in ("aborted", "failed"):
+            streak += 1
+        else:
+            break
+    return streak
 
 
 def _quote(v: str) -> str:
@@ -149,9 +158,13 @@ def main() -> int:
     # or the pass silently develops holes.
     next_page = pf if blocked else pt + 1
     kw_status = None
-    if blocked and recent_failures(supa, kw) >= 3:
-        kw_status = "blocked"
-        log("[queue] three failures in a row — parking this keyword until it is resumed by hand")
+    if blocked:
+        # This run is not written yet, so the streak counts it plus the ones before.
+        streak = 1 + consecutive_failures(supa, kw)
+        if streak >= 3:
+            kw_status = "blocked"
+            log(f"[queue] {streak} failed slices in a row — parking this keyword "
+                f"until it is resumed by hand")
 
     supa.finish_slice(kw, next_page, status=kw_status, listings=len(rows))
     supa.finish_run(run_id, status, listings=len(rows), rows=written["rows"],
