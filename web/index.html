@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Etsy research</title>
+<meta name="description" content="Keyword research board for Etsy — listings, momentum and a crawl queue.">
+<link rel="stylesheet" href="./styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛍️</text></svg>">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><b>Etsy research</b><span id="board-name">board</span></div>
+  <div class="spacer"></div>
+  <div class="stat"><b id="s-listings">—</b><span>listings</span></div>
+  <div class="stat"><b id="s-snaps">—</b><span>observations</span></div>
+  <div class="stat"><b id="s-queue">—</b><span>in queue</span></div>
+  <div class="stat"><b><span class="dot" id="s-dot"></span><span id="s-seen">—</span></b><span>last crawl</span></div>
+  <button class="btn ghost sm" id="token-btn" title="Write token for adding keywords">key</button>
+</header>
+
+<main class="wrap">
+
+  <!-- ── queue ─────────────────────────────────────────────────────── -->
+  <section class="panel">
+    <h2>Scan queue — every 2 hours the runner takes the next slice</h2>
+    <form class="queue-form" id="kw-form" autocomplete="off">
+      <div class="field">
+        <label for="kw">Keyword</label>
+        <input type="text" id="kw" placeholder="e.g. personalised wedding gift" required minlength="2" maxlength="80">
+      </div>
+      <div class="field">
+        <label for="depth">Depth (pages)</label>
+        <input type="number" id="depth" value="20" min="1" max="100">
+      </div>
+      <div class="field">
+        <label for="ppr">Pages / run</label>
+        <input type="number" id="ppr" value="2" min="1" max="5">
+      </div>
+      <button class="btn" type="submit">Add to queue</button>
+    </form>
+    <div class="chips" id="chips"></div>
+  </section>
+
+  <!-- ── filters ───────────────────────────────────────────────────── -->
+  <section class="panel">
+    <div class="filters">
+      <div class="field">
+        <label for="q">Search</label>
+        <input type="text" id="q" placeholder="title, shop or description">
+      </div>
+      <div class="field">
+        <label>Status</label>
+        <div class="seg" id="seg">
+          <button data-status="all" aria-pressed="true">All</button>
+          <button data-status="rising" aria-pressed="false">Rising</button>
+          <button data-status="new" aria-pressed="false">New</button>
+          <button data-status="starred" aria-pressed="false">Starred</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="sort">Sort</label>
+        <select id="sort">
+          <option value="favorites">Favourites</option>
+          <option value="momentum">Momentum (Δ fav)</option>
+          <option value="newest">Newest first seen</option>
+          <option value="price_asc">Price ↑</option>
+          <option value="price_desc">Price ↓</option>
+          <option value="reviews">Reviews</option>
+        </select>
+      </div>
+      <div class="count" id="count"></div>
+    </div>
+  </section>
+
+  <div class="grid" id="grid"></div>
+  <div class="more" id="more-wrap" hidden><button class="btn ghost" id="more">Show more</button></div>
+  <div class="empty" id="empty" hidden>No listings match yet. Add a keyword above — the next run picks it up within two hours.</div>
+
+  <!-- ── runs ──────────────────────────────────────────────────────── -->
+  <section class="panel" style="margin-top:26px">
+    <h2>Recent slices</h2>
+    <table class="runs">
+      <thead><tr><th>Started</th><th>Keyword</th><th>Pages</th><th>Status</th><th>Listings</th><th>Challenges</th><th>IP</th></tr></thead>
+      <tbody id="runs"></tbody>
+    </table>
+  </section>
+</main>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <button class="close" id="drawer-close" aria-label="Close">✕</button>
+  <div id="drawer-body"></div>
+</aside>
+
+<div class="toast" id="toast"></div>
+
+<script src="./config.js"></script>
+<script src="./app.js"></script>
+</body>
+</html>
