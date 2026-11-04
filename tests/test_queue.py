@@ -85,7 +85,15 @@ class WorkflowShapeTests(unittest.TestCase):
 
     def test_the_supabase_workflow_owns_the_two_hour_cadence(self):
         triggers = self.supa[True]
-        self.assertEqual(triggers["schedule"][0]["cron"], "0 */2 * * *")
+        cron = triggers["schedule"][0]["cron"]
+        # Assert the cadence, not the exact minute. GitHub delays schedules at the
+        # top of the hour, so the minute is deliberately offset (:17); pinning the
+        # literal string here just means any such tuning breaks the suite instead
+        # of the thing it is supposed to protect.
+        minute, hours = cron.split()[0], cron.split()[1]
+        self.assertEqual(hours, "*/2", f"not a two-hourly schedule: {cron}")
+        self.assertTrue(minute.isdigit(), f"schedule must pin one minute: {cron}")
+        self.assertNotEqual(minute, "0", "avoid :00 — GitHub congests the top of the hour")
         self.assertIn("workflow_dispatch", triggers)
 
     def test_both_crawlers_share_one_concurrency_group(self):
