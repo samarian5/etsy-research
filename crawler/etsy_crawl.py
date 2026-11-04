@@ -577,6 +577,36 @@ class Crawl:
         self.touch(label)
         return True
 
+    def fetch_source(self, sb, label: str) -> str | None:
+        """get_page_source() with a deadline.
+
+        The 2026-11-04 hang was inside the CDP read of a listing page, so the
+        navigation deadline alone is not enough: the same wedged event loop can
+        swallow this call too. Returns None instead of waiting forever.
+        """
+        timeout = float(os.environ.get("NAV_TIMEOUT") or 90)
+        box: dict = {}
+
+        def _read():
+            try:
+                box["html"] = sb.get_page_source()
+            except Exception as e:  # noqa: BLE001
+                box["err"] = repr(e)[:200]
+
+        t = threading.Thread(target=_read, daemon=True)
+        t.start()
+        t.join(timeout)
+        if t.is_alive():
+            self.nav_timeouts += 1
+            print(f"[crawl] page source exceeded {timeout:.0f}s on {label} — skipping it",
+                  flush=True)
+            return None
+        if box.get("err") or not box.get("html"):
+            self.nav_timeouts += 1
+            print(f"[crawl] page source failed on {label}: {box.get('err', 'empty')}", flush=True)
+            return None
+        return box["html"]
+
     def start_watchdog(self) -> None:
         """Exit the process if nothing has progressed for STALL_MINUTES.
 
@@ -741,7 +771,13 @@ class Crawl:
                 sb.click_if_visible('button[aria-label="Ok"]')
             except Exception:
                 pass
-            soup = sb.get_beautiful_soup() if hasattr(sb, "get_beautiful_soup") else None
+            html = self.fetch_source(sb, f"search p{page_no}")
+            if html is None:
+                if self.nav_timeouts >= 3:
+                    self.stopped_reason = "timeout"
+                    break
+                continue
+            soup = BeautifulSoup(html, "html.parser")
             if soup is None:
                 print("[crawl] no soup; aborting", flush=True)
                 break
@@ -799,7 +835,14 @@ class Crawl:
             except Exception:
                 pass
             self.delay(0.4, 0.9)
-            html = sb.get_page_source()
+            html = self.fetch_source(sb, f"listing {lid}")
+            if html is None:
+                if self.nav_timeouts >= 3:
+                    print("[crawl] 3 failed page reads — stopping the detail pass, "
+                          "keeping collected rows", flush=True)
+                    self.stopped_reason = "timeout"
+                    break
+                continue
             soup = BeautifulSoup(html, "html.parser")
             detail = extract_detail(html, soup, card["url"])
             if i <= self.args.save_detail_html:
