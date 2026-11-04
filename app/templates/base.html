@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Etsy Research{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-in">
+    <a class="brand" href="/">
+      <span class="brand-mark">E</span>
+      <span>Etsy Research</span>
+    </a>
+    <nav class="topnav">
+      <a href="/" class="{{ 'on' if active == 'keywords' else '' }}">Keywords</a>
+      <a href="/results" class="{{ 'on' if active == 'results' else '' }}">Products</a>
+    </nav>
+    <div class="topbar-right">
+      {% if stats is defined and stats.last_capture %}
+      <span class="pulse"><i></i> synced {{ stats.last_capture[:16].replace('T', ' ') }}</span>
+      {% endif %}
+      <form method="post" action="/sync">
+        <button class="btn sm" type="submit" {{ '' if configured else 'disabled' }}>Sync</button>
+      </form>
+    </div>
+  </div>
+</header>
+
+{% if msg %}<div class="toast">{{ msg }}</div>{% endif %}
+
+<div class="wrap">
+  {% block body %}{% endblock %}
+</div>
+
+<footer class="foot">
+  <span>Local-first · SQLite · crawls on GitHub Actions</span>
+  <span><a href="/api/health">health</a></span>
+</footer>
+
+<div id="drawer">
+  <div class="scrim" onclick="closeDrawer()"></div>
+  <aside class="drawer-panel" role="dialog" aria-modal="true">
+    <div id="drawer-body"></div>
+  </aside>
+</div>
+
+<script>
+  function openListing(id) {
+    htmx.ajax('GET', '/listing/' + id, { target: '#drawer-body', swap: 'innerHTML' })
+      .then(function () {
+        document.getElementById('drawer').classList.add('open');
+        document.body.style.overflow = 'hidden';
+        document.querySelector('.drawer-panel').scrollTop = 0;
+      });
+  }
+  function closeDrawer() {
+    document.getElementById('drawer').classList.remove('open');
+    document.body.style.overflow = '';
+  }
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeDrawer(); });
+  // A listing whose image 404s (deleted shop, expired CDN object) hides the image
+  // instead of showing a broken-image icon in the middle of the grid.
+  document.addEventListener('error', function (e) {
+    var t = e.target;
+    if (t && t.tagName === 'IMG' && t.closest('.product-media')) t.style.visibility = 'hidden';
+  }, true);
+
+  // A filter change must leave a shareable URL *and* move the Export link with it —
+  // otherwise "Export CSV" would quietly download the unfiltered set.
+  function syncQuery() {
+    var f = document.getElementById('filters');
+    if (!f) return;
+    var fd = new FormData(f), p = new URLSearchParams(), has = false;
+    fd.forEach(function (v, k) {
+      if (v === '' || v === null || k === 'limit') return;
+      if (k === 'sort' && v === 'favorites') return;          // default, not state
+      p.set(k, v); has = true;
+    });
+    var qs = has ? '?' + p.toString() : '';
+    history.replaceState(null, '', location.pathname + qs);
+    document.querySelectorAll('a[href^="/export.csv"]').forEach(function (a) {
+      a.setAttribute('href', '/export.csv' + qs);
+    });
+  }
+  document.body.addEventListener('htmx:afterSwap', function (e) {
+    if (e.detail.target && e.detail.target.id === 'cards') syncQuery();
+  });
+  if (document.getElementById('filters')) syncQuery();
+
+</script>
+</body>
+</html>
