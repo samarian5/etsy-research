@@ -6,7 +6,8 @@ name: supa-crawl
 # slice instead of breaking a chain.
 on:
   schedule:
-    - cron: "*/7 * * * *"      # TEMPORARY scheduler probe — restored to 17 */2 immediately
+    - cron: "17 */2 * * *"     # 12 slices/day ≈ 24 search pages, ~1.4k listings
+                              # :17 not :00 — GitHub delays schedules at the top of the hour
   workflow_dispatch:
     inputs:
       pages:
@@ -31,7 +32,6 @@ concurrency:
 
 jobs:
   slice:
-    if: ${{ false }}          # TEMPORARY: prove the cron fires without touching Etsy
     runs-on: ubuntu-latest
     timeout-minutes: 45       # a 2-page slice is 14-17 min; anything longer is stuck
     env:
