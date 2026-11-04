@@ -1000,7 +1000,14 @@ class Crawl:
         tmp.write_text(json.dumps(meta, indent=1), encoding="utf-8")
         tmp.replace(self.out / "run.json")
         if not partial:
-            print("[crawl] run.json:", json.dumps(meta), flush=True)
+            # The run log of a public repository is world-readable, and the queue
+            # is the research. Keep the real keyword in run.json (local, sealed
+            # artifact) but never in the printed copy.
+            shown = meta
+            if os.environ.get("REDACT_KEYWORDS") == "1":
+                from artifact_crypt import kwtag
+                shown = dict(meta, keyword=kwtag(meta.get("keyword") or ""))
+            print("[crawl] run.json:", json.dumps(shown), flush=True)
 
 
 def main() -> int:
