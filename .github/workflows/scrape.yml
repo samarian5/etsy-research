@@ -29,7 +29,7 @@ concurrency:
 jobs:
   crawl:
     runs-on: ubuntu-latest
-    timeout-minutes: 350    # under GHA's 6h cap, with room to abort cleanly
+    timeout-minutes: 90     # a 3-page chunk takes ~20 min; anything longer is stuck
     env:
       PYTHONUNBUFFERED: "1"
       PROFILE_DIR: ${{ github.workspace }}/.etsy-profile
@@ -42,6 +42,8 @@ jobs:
       FAST: ${{ inputs.fast }}
       PROFILE_MODE: ${{ inputs.profile }}
       COOLDOWN_SECONDS: "300"   # breathe between chunks: a flagged IP needs the gap
+      STALL_MINUTES: "10"       # no progress for this long => dump stacks and exit
+      NAV_TIMEOUT: "90"         # per-page-load deadline (see navigate())
       REPO: ${{ github.repository }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
