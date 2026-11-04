@@ -55,14 +55,14 @@ def advance(item: dict, rest: list[dict], pages_per_run: int, page_to: int,
             return ({"items": rest, "pages_per_run": pages_per_run, "profile": profile}
                     if rest else None,
                     "budget-stop at final page: keyword finished")
-        if stopped == "blocked":
+        if stopped in ("blocked", "timeout"):
             # A blocked chunk means a suspect session, not a dead end: retry the same
             # page range ONCE with a fresh profile, then stop rather than hammer.
             if int(item.get("attempts") or 0) < 1:
                 retry = {**item, "attempts": int(item.get("attempts") or 0) + 1}
                 return ({"items": [retry, *rest], "pages_per_run": pages_per_run,
                          "profile": "cold"},
-                        "blocked: retrying this chunk once with a cold profile")
+                        f"{stopped}: retrying this chunk once with a cold profile")
         return None, f"failed rc={rc} stopped_reason={stopped}"
 
     if page_to < depth:
