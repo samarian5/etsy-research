@@ -1,0 +1,106 @@
+<div class="result-bar">
+  <span class="count">{{ '{:,}'.format(total) }} <em>{{ 'listing' if total == 1 else 'listings' }}</em></span>
+  {% if chips %}
+  <div class="chips">
+    {% for c in chips %}
+    <span class="chip-filter">{{ c.label }} <a href="{{ c.url }}" title="Remove filter">×</a></span>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+
+{% if rows %}
+<div class="grid">
+  {% for r in rows %}
+  <article class="product">
+    <div class="product-media">
+      <img src="/thumb/{{ r.listing_id }}" alt="" loading="lazy" decoding="async"
+           onerror="this.style.visibility='hidden'">
+
+      <div class="badges">
+        {% if r.is_bestseller %}<span class="badge">Bestseller</span>{% endif %}
+        {% if r.is_on_sale %}<span class="badge sale">Sale</span>{% endif %}
+        {% if r.is_star_seller and not r.is_bestseller %}<span class="badge star">Star seller</span>{% endif %}
+      </div>
+
+      {% if r.fav_delta %}
+      <span class="mover {{ 'neg' if r.fav_delta < 0 }}" title="favorites since the previous crawl">
+        ♥ {{ '%+d'|format(r.fav_delta) }}
+      </span>
+      {% endif %}
+
+      <button class="star-btn {{ 'on' if r.shortlisted }}"
+              hx-post="/shortlist/{{ r.listing_id }}/star" hx-target="this" hx-swap="outerHTML"
+              title="{{ 'Remove from shortlist' if r.shortlisted else 'Add to shortlist' }}">
+        {{ '★' if r.shortlisted else '☆' }}
+      </button>
+    </div>
+
+    <div class="product-body">
+      <div class="kw-chip">
+        <span>{{ r.keywords or 'unranked' }}</span>
+        {% if r.best_page %}<span class="dot"></span><span>page {{ r.best_page }}</span>{% endif %}
+        {% if r.obs_count and r.obs_count > 1 %}
+          <span class="dot"></span><span>{{ r.obs_count }} crawls</span>
+        {% endif %}
+      </div>
+
+      <div class="product-title" title="{{ r.title or '' }}">{{ r.title or '(untitled listing)' }}</div>
+
+      <div class="price-row">
+        {% if r.price_usd is not none %}
+        <span class="price"><span class="cur">$</span>{{ '%.2f'|format(r.price_usd) }}</span>
+        {% if r.price_original_usd and r.price_original_usd > r.price_usd %}
+        <span class="was">${{ '%.2f'|format(r.price_original_usd) }}</span>
+        <span class="sale-off">−{{ ((1 - r.price_usd / r.price_original_usd) * 100)|round|int }}%</span>
+        {% endif %}
+        {% if r.price_delta %}
+        <span class="delta {{ 'up' if r.price_delta > 0 else 'down' }}">{{ '%+.2f'|format(r.price_delta) }}</span>
+        {% endif %}
+        {% else %}
+        <span class="price muted">—</span>
+        {% endif %}
+      </div>
+
+      <div class="stats-row">
+        <span><b>{{ '{:,}'.format(r.listing_review_count or 0) }}</b> reviews</span>
+        <span class="sep"></span>
+        <span><b>{{ '{:,}'.format(r.favorites or 0) }}</b> favorites</span>
+      </div>
+    </div>
+
+    <div class="product-foot">
+      <a class="ext" href="{{ r.url }}" target="_blank" rel="noopener">
+        Etsy
+        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+          <path d="M4 2h6v6M10 2 3.2 8.8" stroke="currentColor" stroke-width="1.5"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </a>
+      <button class="details-link" onclick="openListing('{{ r.listing_id }}')">View details →</button>
+    </div>
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<div class="panel empty">
+  <b>Nothing matches those filters</b>
+  {% if total == 0 and not params.q and not params.keyword %}
+    No rows imported yet — run a crawl, then press Sync.
+  {% else %}
+    Try removing a filter, or widen the price range.
+  {% endif %}
+</div>
+{% endif %}
+
+{% if rows and total > shown %}
+<div class="more-wrap">
+  <button class="btn" hx-get="/results/cards?{{ qs }}&limit={{ [limit * 2, 1200]|min }}"
+          hx-target="#cards" hx-swap="innerHTML">
+    Show more — {{ '{:,}'.format(total - shown) }} left
+  </button>
+  <span class="muted" style="font-size:12px">
+    showing {{ '{:,}'.format(shown) }} of {{ '{:,}'.format(total) }}
+  </span>
+</div>
+{% endif %}
