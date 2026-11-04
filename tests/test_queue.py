@@ -44,6 +44,34 @@ class NavigationTimeoutTests(unittest.TestCase):
         self.assertIsNone(nxt)
 
 
+class WorkflowShapeTests(unittest.TestCase):
+    """A workflow GitHub cannot parse fails as "a run with zero jobs", 5 s apart —
+    which is how eight dead runs appeared on 2026-11-04. Parse it before pushing."""
+
+    def setUp(self):
+        import yaml
+        self.doc = yaml.safe_load(open(".github/workflows/scrape.yml"))
+
+    def test_parses_and_has_the_expected_triggers(self):
+        triggers = self.doc[True]
+        self.assertIn("workflow_dispatch", triggers)
+        self.assertEqual(triggers["schedule"][0]["cron"], "10 4 */2 * *")
+
+    def test_every_step_has_a_name_or_a_uses(self):
+        for job, body in self.doc["jobs"].items():
+            for i, step in enumerate(body["steps"], 1):
+                self.assertTrue(step.get("name") or step.get("uses"),
+                                f"{job} step {i} has neither name nor uses")
+
+    def test_chaining_steps_survive_a_failed_chunk(self):
+        names = {s.get("name"): s for s in self.doc["jobs"]["crawl"]["steps"]}
+        for step in ("Cool down before chaining", "Dispatch next chunk"):
+            self.assertIn("always()", names[step]["if"], step)
+
+    def test_queue_input_is_optional_so_cron_can_run(self):
+        self.assertFalse(self.doc[True]["workflow_dispatch"]["inputs"]["queue"]["required"])
+
+
 class PublishQueueTests(unittest.TestCase):
     """The every-second-day queue is built from the keyword table, not hand-written."""
 
