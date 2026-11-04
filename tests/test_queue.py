@@ -35,6 +35,43 @@ class NavigationTimeoutTests(unittest.TestCase):
         self.assertIsNone(nxt)
 
 
+class SolverEscalationTests(unittest.TestCase):
+    """A solver that cannot clear DataDome must stop being retried."""
+
+    def test_two_dead_solves_shorten_the_escalation(self):
+        import sys
+        sys.path.insert(0, "crawler")
+        import etsy_crawl
+
+        class Args:
+            keyword = "tshirt"; depth = 1; pages_from = 1; pages_to = 1
+            max_requests = 100; save_detail_html = 0; save_html_pages = 0; fast = True
+            run_id = "t"; started_at = "now"; out = "out"
+            user_data_dir = "p"; browser_executable_path = None; proxy = None
+            skip_ids = ""
+
+        crawl = etsy_crawl.Crawl(Args())
+
+        class SB:
+            bufsize = 0
+            def solve_captcha(self):
+                raise RuntimeError("no slider")
+            def refresh(self):
+                pass
+
+        self.assertFalse(crawl.solve(SB(), "page"))
+        self.assertEqual(crawl.solve_failures, 1)
+        self.assertFalse(crawl.solve(SB(), "page"))
+        self.assertEqual(crawl.solve_failures, 2)
+        # a good solve resets the counter, so a healthy session is not penalised
+        class Good(SB):
+            def solve_captcha(self):
+                pass
+        crawl.delay = lambda *a, **k: None
+        self.assertTrue(crawl.solve(Good(), "page"))
+        self.assertEqual(crawl.solve_failures, 0)
+
+
 class AdvanceTests(unittest.TestCase):
     def test_mid_depth_slice_resumes_at_next_page(self):
         nxt, reason = advance({"keyword": "tshirt", "depth": 20}, [], 8, 8, 0, ok(8))
