@@ -1,0 +1,131 @@
+name: supa-crawl
+
+# The queue lives in Supabase, so there is nothing to dispatch and nothing to
+# chain: every two hours a fresh runner takes the next slice, writes it, and
+# exits. Two runs never overlap (concurrency group) and a missed tick costs one
+# slice instead of breaking a chain.
+on:
+  schedule:
+    - cron: "0 */2 * * *"      # 12 slices/day ≈ 24 search pages, ~1.4k listings
+  workflow_dispatch:
+    inputs:
+      pages:
+        description: "search pages for this slice (1-5, default 2)"
+        required: false
+        default: "2"
+      fast:
+        description: "true = tighter waits (0.6s floor). Leave false: fast is what trips DataDome"
+        required: false
+        default: "false"
+      profile:
+        description: "warm = reuse the cached Chrome profile; cold = clean start after a block"
+        required: false
+        default: "warm"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: etsy-crawl          # single-flight: never two crawls against one site
+  cancel-in-progress: false
+
+jobs:
+  slice:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45       # a 2-page slice is 14-17 min; anything longer is stuck
+    env:
+      PYTHONUNBUFFERED: "1"
+      PROFILE_DIR: ${{ github.workspace }}/.etsy-profile
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      PAGES_PER_RUN: ${{ inputs.pages || '2' }}
+      # Logs of a public repo are world-readable; keep the keyword list out of them.
+      REDACT_KEYWORDS: "1"
+      FAST: ${{ inputs.fast || 'false' }}
+      PROFILE_MODE: ${{ inputs.profile || 'warm' }}
+      STALL_MINUTES: "10"
+      NAV_TIMEOUT: "90"
+      BLOCK_MEDIA: "1"
+      MAX_CHALLENGES: "6"
+      PRUNE: "1"              # cheap: deletes superseded snapshots older than 7 days
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check credentials
+        run: |
+          if [ -z "${SUPABASE_URL}" ] || [ -z "${SUPABASE_SERVICE_KEY}" ]; then
+            echo "::error::SUPABASE_URL / SUPABASE_SERVICE_KEY missing — nothing to write to"
+            exit 1
+          fi
+          echo "supabase host: ${SUPABASE_URL#https://}"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install system deps (xvfb + chrome)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb
+          if ! command -v google-chrome >/dev/null 2>&1; then
+            npx --yes @puppeteer/browsers install chrome@stable --path "$RUNNER_TEMP/chrome"
+          fi
+          (command -v google-chrome && google-chrome --version) || true
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-crawler.txt
+
+      - name: Unit tests (parsers)
+        run: python -m unittest discover -s tests -q
+
+      - name: Restore Chrome profile cache
+        if: (inputs.profile || 'warm') != 'cold'
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.PROFILE_DIR }}
+          key: etsy-supa-profile-v1-${{ github.run_id }}
+          restore-keys: |
+            etsy-supa-profile-v1-
+
+      - name: Run one slice
+        id: slice
+        run: |
+          CHROME_BIN="$(command -v google-chrome || find "$RUNNER_TEMP/chrome" -name chrome -type f | head -1)"
+          echo "chrome: $CHROME_BIN"
+          export BROWSER_BIN="$CHROME_BIN"
+          mkdir -p out
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" python scripts/supa_run.py
+
+      - name: Prune profile before caching
+        if: always()
+        run: |
+          rm -rf "$PROFILE_DIR/Default/Cache" "$PROFILE_DIR/Default/Code Cache" \
+                 "$PROFILE_DIR/Default/GPUCache" "$PROFILE_DIR/Default/Service Worker" || true
+
+      - name: Decide whether this profile is safe to cache
+        id: clean
+        if: always()
+        run: |
+          python - <<'EOF'
+          import json, os
+          try:
+              meta = json.load(open("out/run.json"))
+          except Exception:
+              meta = {}
+          clean = meta.get("status") == "succeeded" and int(meta.get("challenges") or 0) == 0
+          print("status:", meta.get("status"), "| challenges:", meta.get("challenges"),
+                "| cacheable:", clean)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write("clean=%s\n" % ("true" if clean else "false"))
+          EOF
+
+      - name: Save Chrome profile cache (only after a challenge-free run)
+        if: always() && steps.clean.outputs.clean == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.PROFILE_DIR }}
+          key: etsy-supa-profile-v1-${{ github.run_id }}
