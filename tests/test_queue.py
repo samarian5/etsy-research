@@ -17,6 +17,24 @@ def ok(pages_done):
     return {"status": "succeeded", "stopped_reason": None, "pages_done": pages_done}
 
 
+class NavigationTimeoutTests(unittest.TestCase):
+    def test_timeout_retries_same_slice_with_a_cold_profile(self):
+        """A chunk that stalled on navigation must retry the SAME pages, not skip them."""
+        item = {"keyword": "tshirt", "depth": 20, "page": 4}
+        nxt, reason = advance(item, [], 3, 6, 1,
+                              {"stopped_reason": "timeout", "pages_done": 0}, "warm")
+        self.assertEqual(nxt["items"][0]["page"], 4)
+        self.assertEqual(nxt["profile"], "cold")
+        self.assertEqual(nxt["items"][0]["attempts"], 1)
+        self.assertIn("timeout", reason)
+
+    def test_timeout_twice_gives_up(self):
+        item = {"keyword": "tshirt", "depth": 20, "page": 4, "attempts": 1}
+        nxt, reason = advance(item, [], 3, 6, 1,
+                              {"stopped_reason": "timeout", "pages_done": 0}, "cold")
+        self.assertIsNone(nxt)
+
+
 class AdvanceTests(unittest.TestCase):
     def test_mid_depth_slice_resumes_at_next_page(self):
         nxt, reason = advance({"keyword": "tshirt", "depth": 20}, [], 8, 8, 0, ok(8))
