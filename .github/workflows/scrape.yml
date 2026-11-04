@@ -202,8 +202,20 @@ jobs:
         if: always() && !cancelled()
         run: |
           if [ -f out/next_queue.json ]; then
-            echo "sleeping ${COOLDOWN_SECONDS}s before the next chunk"
-            sleep "${COOLDOWN_SECONDS}"
+            # A retry after a block waits longer: the point is to land on a different
+            # runner IP *and* let the flagged session go cold, not to retry in place.
+            SECS=$(python - <<'EOF'
+import json
+try:
+    q = json.load(open("out/next_queue.json"))
+    attempts = max([int(i.get("attempts") or 0) for i in q.get("items") or [{}]] or [0])
+except Exception:
+    attempts = 0
+print(900 if attempts >= 1 else 300)
+EOF
+)
+            echo "sleeping ${SECS}s before the next chunk (attempt ${attempts:-0})"
+            sleep "$SECS"
           else
             echo "queue finished — no cooldown needed"
           fi
