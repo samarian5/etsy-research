@@ -35,6 +35,37 @@ class NavigationTimeoutTests(unittest.TestCase):
         self.assertIsNone(nxt)
 
 
+class PublishQueueTests(unittest.TestCase):
+    """The every-second-day queue is built from the keyword table, not hand-written."""
+
+    def _db(self):
+        import sqlite3, tempfile, os
+        path = os.path.join(tempfile.mkdtemp(), "q.db")
+        con = sqlite3.connect(path)
+        con.execute("create table keyword (id integer primary key, phrase text, depth int, enabled int)")
+        con.executemany("insert into keyword (phrase, depth, enabled) values (?,?,?)",
+                        [("tshirt", 20, 1), ("ceramic mug", 2, 1), ("retired phrase", 5, 0)])
+        con.commit(); con.close()
+        return path
+
+    def test_enabled_keywords_become_items_starting_at_page_one(self):
+        import sys
+        sys.path.insert(0, "scripts")
+        import publish_queue
+        q = publish_queue.build_queue(self._db(), pages_per_run=5)
+        self.assertEqual([i["keyword"] for i in q["items"]], ["tshirt", "ceramic mug"])
+        self.assertEqual([i["depth"] for i in q["items"]], [20, 2])
+        self.assertTrue(all(i["page"] == 1 for i in q["items"]))
+        self.assertEqual(q["pages_per_run"], 5)
+
+    def test_max_depth_caps_a_recurring_pass(self):
+        import sys
+        sys.path.insert(0, "scripts")
+        import publish_queue
+        q = publish_queue.build_queue(self._db(), max_depth=3)
+        self.assertEqual([i["depth"] for i in q["items"]], [3, 2])
+
+
 class SolverEscalationTests(unittest.TestCase):
     """A solver that cannot clear DataDome must stop being retried."""
 
