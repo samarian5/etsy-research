@@ -77,6 +77,20 @@ def advance(item: dict, rest: list[dict], pages_per_run: int, page_to: int,
             f"keyword '{item.get('keyword')}' complete at depth {depth}")
 
 
+def session_pages(pages_per_run: int, page_loads: int | None = None) -> int:
+    """How many search pages fit in one browser session.
+
+    Measured 2026-11-04 (run 41771853096): discovery of 5 pages, then 130 detail
+    visits, then DataDome blocked every listing — 159 page loads in 14 minutes.
+    A slice that asks for more than that spends its last minutes being refused and
+    loses the rest of the slice. 60 cards per page is the planning number.
+    """
+    cap = int(os.environ.get("MAX_PAGE_LOADS_PER_SESSION") or 130)
+    if page_loads is not None:
+        cap = page_loads
+    return max(1, min(int(pages_per_run), cap // 55))
+
+
 def main() -> int:
     raw = os.environ.get("QUEUE") or ""
     if not raw:
@@ -91,6 +105,13 @@ def main() -> int:
     item = dict(items[0])
     rest = list(items[1:])
     pages_per_run = max(1, int(queue.get("pages_per_run") or 8))
+    # Never ask one browser session for more than it survives: measured ~150 page
+    # loads before DataDome starts refusing every listing.
+    allowed = session_pages(pages_per_run)
+    if allowed < pages_per_run:
+        print(f"[chunk] pages_per_run {pages_per_run} exceeds a session budget — using {allowed}",
+              flush=True)
+        pages_per_run = allowed
     depth = max(1, int(item.get("depth") or 20))
     page_from = max(1, min(int(item.get("page") or 1), depth))
     page_to = min(page_from + pages_per_run - 1, depth)
