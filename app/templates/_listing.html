@@ -1,0 +1,111 @@
+{% set price = l.price_usd %}
+<div class="drawer-head">
+  <span class="muted" style="font-size:11.5px; letter-spacing:.07em; text-transform:uppercase">
+    {{ (l.keywords or 'unranked')|upper }}
+    {% if l.best_page %} · page {{ l.best_page }}{% endif %}
+    · captured {{ (l.captured_at or '')[:10] }}
+  </span>
+  <span class="grow"></span>
+  <button class="star-btn {{ 'on' if l.shortlisted }}"
+          style="position:static; opacity:1"
+          hx-post="/shortlist/{{ l.listing_id }}/star" hx-target="this" hx-swap="outerHTML"
+          title="{{ 'Remove from shortlist' if l.shortlisted else 'Add to shortlist' }}">
+    {{ '★' if l.shortlisted else '☆' }}
+  </button>
+  <button class="btn sm ghost" onclick="closeDrawer()" title="Close (Esc)">✕</button>
+</div>
+
+<div class="drawer-body">
+  <img class="hero" src="/thumb/{{ l.listing_id }}" alt=""
+       onerror="this.style.visibility='hidden'">
+
+  <h3>{{ l.title or '(untitled)' }}</h3>
+  <div class="drawer-shop">
+    {% if l.shop_url %}
+      <a href="{{ l.shop_url }}" target="_blank" rel="noopener">{{ l.shop_name or 'shop' }}</a>
+    {% else %}{{ l.shop_name or 'unknown shop' }}{% endif %}
+    {% if l.shop_review_count %}
+      <span class="muted"> · {{ '{:,}'.format(l.shop_review_count) }} shop reviews</span>
+      {% if l.shop_rating %}<span class="muted"> · {{ '%.1f'|format(l.shop_rating) }}★</span>{% endif %}
+    {% endif %}
+  </div>
+
+  <div class="drawer-actions">
+    <a class="btn primary" href="{{ l.url }}" target="_blank" rel="noopener">
+      Open on Etsy
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+        <path d="M4 2h6v6M10 2 3.2 8.8" stroke="currentColor" stroke-width="1.5"
+              stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </a>
+    {% if l.is_bestseller %}<span class="pill">Bestseller</span>{% endif %}
+    {% if l.is_star_seller %}<span class="pill">Star seller</span>{% endif %}
+    {% if l.free_shipping %}<span class="pill plain">Free shipping</span>{% endif %}
+    {% if l.is_on_sale %}<span class="pill warn">On sale</span>{% endif %}
+  </div>
+
+  <div class="kv">
+    <div>
+      <dt>Price</dt>
+      <dd>
+        {% if price is not none %}
+          ${{ '%.2f'|format(price) }}
+          {% if l.price_delta %}
+            <span class="delta {{ 'up' if l.price_delta > 0 else 'down' }}">{{ '%+.2f'|format(l.price_delta) }}</span>
+          {% endif %}
+        {% else %}—{% endif %}
+        {% if l.is_range %}
+          <div class="muted" style="font-size:11.5px; font-weight:400">
+            range ${{ '%.2f'|format(l.price_min_usd or price) }}–${{ '%.2f'|format(l.price_max_usd or price) }}
+          </div>
+        {% endif %}
+      </dd>
+    </div>
+    <div>
+      <dt>Favorites</dt>
+      <dd>
+        {{ '{:,}'.format(l.favorites) if l.favorites is not none else '—' }}
+        {% if l.fav_delta %}
+          <span class="delta {{ 'up' if l.fav_delta > 0 else 'down' }}">{{ '%+d'|format(l.fav_delta) }}</span>
+        {% endif %}
+      </dd>
+    </div>
+    <div>
+      <dt>Reviews</dt>
+      <dd>{{ '{:,}'.format(l.listing_review_count) if l.listing_review_count is not none else '—' }}
+        {% if l.listing_rating %}<span class="muted" style="font-weight:400">· {{ '%.1f'|format(l.listing_rating) }}★</span>{% endif %}
+      </dd>
+    </div>
+    <div>
+      <dt>Crawls seen</dt>
+      <dd>{{ l.obs_count or 1 }}</dd>
+    </div>
+  </div>
+
+  {% if history and history|length > 1 %}
+  <h4 style="margin:22px 0 8px">Favorites over time</h4>
+  {% set fvals = history|map(attribute='favorites')|reject('none')|list %}
+  {% set fhi = fvals|max if fvals else 1 %}
+  <div class="spark">
+    {% for h in history %}
+      {% if h.favorites is not none %}
+        <i style="height:{{ (100 * h.favorites / fhi)|round|int if fhi else 0 }}%"
+           title="{{ h.favorites }} favorites · {{ h.captured_at[:10] }}"></i>
+      {% endif %}
+    {% endfor %}
+  </div>
+  <div class="muted" style="font-size:12px; margin-top:5px">
+    {{ history|length }} observations ·
+    {% if fvals %}{{ '{:,}'.format(fvals|min) }} → {{ '{:,}'.format(fvals|max) }} favorites{% endif %}
+    {% set pvals = history|map(attribute='price_usd')|reject('none')|list %}
+    {% if pvals %} · ${{ '%.2f'|format(pvals|min) }}–${{ '%.2f'|format(pvals|max) }}{% endif %}
+  </div>
+  {% endif %}
+
+  {% if l.description %}
+    <h4 style="margin:22px 0 8px">Description</h4>
+    <div class="desc">{{ l.description }}</div>
+  {% else %}
+    <div class="desc muted" style="margin-top:22px">No description captured for this snapshot.</div>
+  {% endif %}
+</div>
