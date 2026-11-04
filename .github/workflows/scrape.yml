@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       queue:
-        description: 'JSON queue {"items":[{"keyword":"tshirt","depth":20}],"pages_per_run":8}'
-        required: true
+        description: 'JSON queue {"items":[{"keyword":"tshirt","depth":20}],"pages_per_run":8} — empty reads queue.sealed from the repo'
+        required: false
+        default: ""
       fast:
         description: "true = tighter waits (still >=0.6s between page loads)"
         required: false
@@ -14,9 +15,12 @@ on:
         description: "warm = reuse cached Chrome profile; cold = start clean after a block"
         required: false
         default: "warm"
-  # Weekly refresh can dispatch a queue built from the keyword table.
-  # schedule:
-  #   - cron: "17 3 * * 1"
+  # Refresh every second day, unattended, whether or not this laptop is on.
+  # The queue travels as `queue.sealed` committed in the repo (scripts/publish_queue.py)
+  # so the keyword list is never in the public tree; a dispatch input overrides it.
+  # 04:10 UTC = early morning US / late morning EU: off-peak for Etsy's busiest pages.
+  schedule:
+    - cron: "10 4 */2 * *"
 
 permissions:
   contents: read
@@ -39,8 +43,8 @@ jobs:
       QUEUE_IN: ${{ inputs.queue }}
       ETSY_ARTIFACT_KEY: ${{ secrets.ETSY_ARTIFACT_KEY }}
       REDACT_KEYWORDS: "1"    # public repo: logs show kw-<hash>, not the keyword
-      FAST: ${{ inputs.fast }}
-      PROFILE_MODE: ${{ inputs.profile }}
+      FAST: ${{ inputs.fast || 'true' }}
+      PROFILE_MODE: ${{ inputs.profile || 'warm' }}
       COOLDOWN_SECONDS: "300"   # breathe between chunks: a flagged IP needs the gap
       STALL_MINUTES: "10"       # no progress for this long => dump stacks and exit
       NAV_TIMEOUT: "90"         # per-page-load deadline (see navigate())
@@ -60,12 +64,21 @@ jobs:
           sys.path.insert(0, "crawler")
           import artifact_crypt as ac
           raw = os.environ.get("QUEUE_IN") or ""
+          source = "dispatch input"
+          if not raw.strip() and os.path.exists("queue.sealed"):
+              raw = open("queue.sealed").read()
+              source = "queue.sealed (scheduled run)"
+          if not raw.strip():
+              print("::error::no queue: pass a dispatch input or commit queue.sealed")
+              raise SystemExit(1)
           queue = ac.unseal(raw) if ac.is_sealed(raw) else raw
           json.loads(queue)  # fail loudly on a corrupt payload
           with open(os.environ["GITHUB_ENV"], "a") as fh:
               fh.write("QUEUE=%s\n" % queue.replace("\n", " "))
-          print("queue opened: %d item(s), %s" % (
-              len(json.loads(queue).get("items") or []), "sealed" if ac.is_sealed(raw) else "plaintext"))
+          print("queue opened from %s: %d item(s), %s, pages/run %s" % (
+              source, len(json.loads(queue).get("items") or []),
+              "sealed" if ac.is_sealed(raw) else "plaintext",
+              json.loads(queue).get("pages_per_run")))
           EOF
 
       - uses: actions/setup-python@v5
@@ -96,7 +109,7 @@ jobs:
 
       # ── warm profile: restore last known-good, save only after a clean run ──
       - name: Restore Chrome profile cache
-        if: inputs.profile != 'cold'
+        if: (inputs.profile || 'warm') != 'cold'
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.PROFILE_DIR }}
