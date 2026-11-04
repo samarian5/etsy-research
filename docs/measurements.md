@@ -239,3 +239,96 @@ blocked chunk now costs ~3 min before the cold retry instead of ~21 min.
 Each one produced the same symptom from the outside — a run that never finishes or
 a page that never appears — which is why page coverage is now computed from rows
 (`occurrence` ⋈ `snapshot`) and not from what a run claims it did.
+
+## Every second day, for free, without this laptop
+
+The refresh is a `schedule:` trigger in the workflow — `cron: "10 4 */2 * *"` — so
+GitHub runs it whether the machine is on, asleep, or in another country. A scheduled
+run has no dispatch inputs, so the queue has to live in the repository:
+
+```
+scripts/publish_queue.py      # builds from the keyword table, seals, commits queue.sealed
+   ↓ (committed, AES-256-CBC, same ETSY_ARTIFACT_KEY as the artifacts)
+cron 10 4 */2 * *  →  "Open the queue" step  →  QUEUE_IN empty ⇒ read queue.sealed
+   ↓
+first chunk  →  5-min cooldown  →  self-dispatch  →  … until the queue is empty
+```
+
+Verified end to end on 2026-11-04: a dispatch with an **empty** queue input logged
+`queue opened from queue.sealed (scheduled run): 2 item(s), sealed, pages/run 5`, and
+the same code path passes locally when run exactly as the workflow runs it.
+
+Decisions that matter:
+
+| Choice | Why |
+| --- | --- |
+| Queue in the repo, sealed | A cron cannot read the local SQLite file; a plaintext keyword list would be public |
+| `queue.sealed` refreshed by the dashboard | Adding a keyword re-seals and commits it, so the cron is never stale |
+| `pages_per_run: 5` | One chunk stays under ~35 min, well inside the 90-min ceiling and the stall watchdog |
+| Depth = each keyword's own depth | `--max-depth N` caps a recurring pass when full-depth monitoring is unnecessary |
+| 04:10 UTC | Off-peak for both US and EU; the politeness budget is per listing, not per hour |
+
+## Movement is the product of a bi-daily crawl
+
+Re-crawling the same listings is only worth anything if the second observation can be
+compared with the first. `snapshot` has always kept a row per crawl; the dashboard now
+uses the *previous* row:
+
+```sql
+LEAD(s.favorites) OVER (PARTITION BY s.listing_id ORDER BY s.captured_at DESC) AS fav_prev
+```
+
+`fav_delta` and `price_delta` are shown inline (`+11`, `−0.50`) and exported in the CSV,
+and there is a `Momentum Δ` sort. On the data already in the store — listings seen twice
+— the top mover had gained 11 favorites between crawls, which is the signal a single
+snapshot cannot give.
+
+## An invalid workflow looks like eight mysterious failures
+
+While wiring the bi-daily cooldown, a heredoc body ended up at column 0 inside a
+`run: |` block. YAML stops the block scalar there, so the file no longer parsed.
+GitHub's response is quiet and confusing: **every push to the branch creates a run
+named `.github/workflows/scrape.yml` with `event: push`, zero jobs, and conclusion
+`failure`, five seconds apart.** Eight of them appeared in thirty seconds and looked
+exactly like a dispatch storm from the chain.
+
+Nothing was looping — a run with no jobs cannot dispatch anything. The lesson is
+mechanical, so it is now enforced: `scripts/deploy.py` parses any `.yml` with PyYAML
+and refuses to push a workflow without `jobs`/`steps`, and `tests/test_queue.py`
+asserts the same shape (triggers, named steps, `always()` on the chaining steps,
+optional queue input). A broken workflow can no longer reach the branch.
+
+Related: the cooldown is now computed by a `python -c` one-liner into
+`$GITHUB_OUTPUT` (300 s, or 900 s when the next chunk is a retry after a block) — a
+single line cannot break a block scalar.
+
+## What actually trips DataDome (measured, 2026-11-04 04:00–05:35 UTC)
+
+Four runs in ninety minutes, same code, same keyword, same target pages:
+
+| Run | Mode | Egress IP | Outcome |
+| --- | --- | --- | --- |
+| 41771853096 | fast, 5 pages | `172.171.13.58` | 130 listings, then every listing blocked |
+| 41775021297 | fast, retry | — | blocked again |
+| 41778108727 | fast, retry | — | blocked again |
+| 41779000674 | **slow, 1 page** | `20.64.107.49` | 1 challenge on the search page, **cleared after 45 s**, 60/60 listings, zero detail blocks |
+
+Two conclusions, one of them uncomfortable:
+
+1. **The egress IP is the dominant variable.** The same slice that died at 130 listings
+   on one Azure address finished cleanly on another. Nothing in our code changed.
+2. **The escalation ladder is worth exactly one round.** The 45 s settle cleared the
+   search-page challenge. The old 60/120/180 s ladder spent 4.5 minutes per page and
+   never cleared a block that had already started. Blocks that survive the first
+   round are session/IP-bound, and the only thing that fixes them is a different
+   runner.
+
+Cost of the difference: fast is 5.4 s/listing, slow is **7.5 s/listing**. For a
+2-page chunk that is ~11 minutes instead of ~8. Given that a block throws away the
+rest of the chunk, slow is the better default for scheduled runs — and a scheduled
+run has nobody watching to retry it.
+
+Chunk sizing follows from the same numbers: ~150 page loads or ~14 minutes is what a
+session survives before DataDome starts refusing. `session_pages()` clamps any
+requested `pages_per_run` to `MAX_PAGE_LOADS_PER_SESSION // 55`, so a chunk cannot be
+written that asks for more than a session can deliver.
