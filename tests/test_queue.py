@@ -28,8 +28,17 @@ class NavigationTimeoutTests(unittest.TestCase):
         self.assertEqual(nxt["items"][0]["attempts"], 1)
         self.assertIn("timeout", reason)
 
-    def test_timeout_twice_gives_up(self):
+    def test_blocked_gets_a_second_cold_retry(self):
+        """IP-level blocks are common; the second retry is what saves a pass."""
         item = {"keyword": "tshirt", "depth": 20, "page": 4, "attempts": 1}
+        nxt, reason = advance(item, [], 3, 6, 1,
+                              {"stopped_reason": "blocked", "pages_done": 0}, "cold")
+        self.assertIsNotNone(nxt)
+        self.assertEqual(nxt["items"][0]["attempts"], 2)
+        self.assertEqual(nxt["profile"], "cold")
+
+    def test_timeout_twice_gives_up(self):
+        item = {"keyword": "tshirt", "depth": 20, "page": 4, "attempts": 2}
         nxt, reason = advance(item, [], 3, 6, 1,
                               {"stopped_reason": "timeout", "pages_done": 0}, "cold")
         self.assertIsNone(nxt)
@@ -129,7 +138,8 @@ class AdvanceTests(unittest.TestCase):
         self.assertIn("cold", reason)
 
     def test_second_block_stops_the_chain(self):
-        nxt, reason = advance({"keyword": "tshirt", "depth": 20, "attempts": 1}, [], 8, 8, 1,
+        """Two cold retries, then it stops rather than hammering a blocked keyword."""
+        nxt, reason = advance({"keyword": "tshirt", "depth": 20, "attempts": 2}, [], 8, 8, 1,
                               {"status": "aborted", "stopped_reason": "blocked", "pages_done": 0})
         self.assertIsNone(nxt)
         self.assertIn("blocked", reason)
