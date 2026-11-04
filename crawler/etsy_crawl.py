@@ -451,6 +451,7 @@ class Crawl:
         self.last_progress = time.time()
         self.progress_note = "startup"
         self.nav_timeouts = 0
+        self.solve_failures = 0   # consecutive solver attempts that did not clear
         self.pages_done = 0
         self.started_at = time.time()
         # A session that keeps getting challenged is not worth thousands of retries:
@@ -679,8 +680,20 @@ class Crawl:
                   f"stopping this chunk with the rows collected", flush=True)
             return False
         self.set_blocking(False)   # the slider renders from images
-        for attempt, wait in ((1, 60), (2, 120), (3, 180)):
-            solved = self.solve(sb, page_label)
+        # Measured 2026-11-04: on a DataDome *block* page (title 'etsy.com', no
+        # captcha in the DOM) the solver cannot do anything, and each escalation
+        # attempt still cost 90 s of deadline plus a 60/120/180 s nap — seven
+        # minutes per blocked listing, 21 minutes to reach the circuit breaker.
+        # Two dead attempts are evidence enough: after that, probe once and count
+        # the page as blocked so the cold-profile retry can start.
+        if self.solve_failures >= 2:
+            print(f"[crawl] solver has failed {self.solve_failures}x this run — "
+                  f"not escalating on {page_label}", flush=True)
+            attempts = ((1, 15),)
+        else:
+            attempts = ((1, 60), (2, 120), (3, 180))
+        for attempt, wait in attempts:
+            solved = self.solve(sb, page_label) if self.solve_failures < 2 else False
             # A solver that could not even start does not deserve the full backoff.
             time.sleep(wait if solved else 5)
             try:
@@ -695,6 +708,10 @@ class Crawl:
                 print(f"[crawl] challenge cleared on attempt {attempt} ({page_label})", flush=True)
                 return True
             print(f"[crawl] still blocked after attempt {attempt} ({page_label})", flush=True)
+            if attempt >= 2 and self.solve_failures >= 2:
+                print(f"[crawl] the solver is not clearing this session's challenges — "
+                      f"stop escalating on {page_label}", flush=True)
+                break
         self.consecutive_blocks += 1
         self.set_blocking(True)
         print(f"[crawl] giving up on {page_label}; "
@@ -726,10 +743,13 @@ class Crawl:
         if t.is_alive():
             print(f"[crawl] solve_captcha() still running after {timeout}s on {label} — "
                   f"abandoning this attempt", flush=True)
+            self.solve_failures += 1
             return False
         if "err" in outcome:
             print(f"[crawl] solve_captcha failed: {outcome['err']}", flush=True)
+            self.solve_failures += 1
             return False
+        self.solve_failures = 0
         print(f"[crawl] solve_captcha() attempted on {label}", flush=True)
         self.delay(2, 3)
         return True
