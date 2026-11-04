@@ -19,12 +19,9 @@ on:
         description: "block = skip images/fonts (fast); load = behave like a real browser"
         required: false
         default: "block"
-  # Refresh every second day, unattended, whether or not this laptop is on.
-  # The queue travels as `queue.sealed` committed in the repo (scripts/publish_queue.py)
-  # so the keyword list is never in the public tree; a dispatch input overrides it.
-  # 04:10 UTC = early morning US / late morning EU: off-peak for Etsy's busiest pages.
-  schedule:
-    - cron: "10 4 */2 * *"
+  # Superseded by supa-crawl.yml (every 2 h, queue in Supabase). Kept for
+  # manual runs against the sealed-queue + artifact path; no schedule here, or
+  # the two crawlers would fight over the same site and the same concurrency group.
 
 permissions:
   contents: read
