@@ -70,18 +70,42 @@ class WorkflowShapeTests(unittest.TestCase):
 
     def setUp(self):
         import yaml
-        self.doc = yaml.safe_load(open(".github/workflows/scrape.yml"))
+        with open(".github/workflows/scrape.yml") as fh:
+            self.doc = yaml.safe_load(fh)
+        with open(".github/workflows/supa-crawl.yml") as fh:
+            self.supa = yaml.safe_load(fh)
 
     def test_parses_and_has_the_expected_triggers(self):
         triggers = self.doc[True]
         self.assertIn("workflow_dispatch", triggers)
-        self.assertEqual(triggers["schedule"][0]["cron"], "10 4 */2 * *")
+        # The schedule moved to supa-crawl.yml when the queue left the repository.
+        # Two crawlers on one cron would fight for the same site and the same
+        # concurrency group, so scrape.yml must stay dispatch-only.
+        self.assertNotIn("schedule", triggers)
+
+    def test_the_supabase_workflow_owns_the_two_hour_cadence(self):
+        triggers = self.supa[True]
+        self.assertEqual(triggers["schedule"][0]["cron"], "0 */2 * * *")
+        self.assertIn("workflow_dispatch", triggers)
+
+    def test_both_crawlers_share_one_concurrency_group(self):
+        for doc, name in ((self.doc, "scrape"), (self.supa, "supa-crawl")):
+            self.assertEqual(doc["concurrency"]["group"], "etsy-crawl", name)
+            self.assertFalse(doc["concurrency"]["cancel-in-progress"], name)
+
+    def test_the_supabase_slice_writes_to_the_configured_project(self):
+        env = self.supa["jobs"]["slice"]["env"]
+        self.assertEqual(env["SUPABASE_URL"], "${{ secrets.SUPABASE_URL }}")
+        self.assertEqual(env["SUPABASE_SERVICE_KEY"], "${{ secrets.SUPABASE_SERVICE_KEY }}")
+        run = [s for s in self.supa["jobs"]["slice"]["steps"] if s.get("id") == "slice"][0]
+        self.assertIn("scripts/supa_run.py", run["run"])
 
     def test_every_step_has_a_name_or_a_uses(self):
-        for job, body in self.doc["jobs"].items():
-            for i, step in enumerate(body["steps"], 1):
-                self.assertTrue(step.get("name") or step.get("uses"),
-                                f"{job} step {i} has neither name nor uses")
+        for doc in (self.doc, self.supa):
+            for job, body in doc["jobs"].items():
+                for i, step in enumerate(body["steps"], 1):
+                    self.assertTrue(step.get("name") or step.get("uses"),
+                                    f"{job} step {i} has neither name nor uses")
 
     def test_chaining_steps_survive_a_failed_chunk(self):
         names = {s.get("name"): s for s in self.doc["jobs"]["crawl"]["steps"]}
