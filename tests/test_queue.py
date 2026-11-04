@@ -38,7 +38,7 @@ class NavigationTimeoutTests(unittest.TestCase):
         self.assertEqual(nxt["profile"], "cold")
 
     def test_timeout_twice_gives_up(self):
-        item = {"keyword": "tshirt", "depth": 20, "page": 4, "attempts": 2}
+        item = {"keyword": "tshirt", "depth": 20, "page": 4, "attempts": 3}
         nxt, reason = advance(item, [], 3, 6, 1,
                               {"stopped_reason": "timeout", "pages_done": 0}, "cold")
         self.assertIsNone(nxt)
@@ -186,8 +186,8 @@ class AdvanceTests(unittest.TestCase):
         self.assertIn("cold", reason)
 
     def test_second_block_stops_the_chain(self):
-        """Two cold retries, then it stops rather than hammering a blocked keyword."""
-        nxt, reason = advance({"keyword": "tshirt", "depth": 20, "attempts": 2}, [], 8, 8, 1,
+        """Three cold retries, then it stops rather than hammering a blocked keyword."""
+        nxt, reason = advance({"keyword": "tshirt", "depth": 20, "attempts": 3}, [], 8, 8, 1,
                               {"status": "aborted", "stopped_reason": "blocked", "pages_done": 0})
         self.assertIsNone(nxt)
         self.assertIn("blocked", reason)
