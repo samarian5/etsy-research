@@ -24,12 +24,20 @@ on:
         description: "warm = reuse the cached Chrome profile; cold = clean start after a block"
         required: false
         default: "warm"
+      worker:
+        description: "worker slot (w1..wN). Each slot has its own concurrency group, profile and identity"
+        required: false
+        default: "w1"
 
 permissions:
   contents: read
 
 concurrency:
-  group: etsy-crawl          # single-flight: never two crawls against one site
+  # One group PER WORKER SLOT — this is the whole trick. The queue is
+  # multi-consumer (claim_slice uses `for update skip locked`), so N slots may
+  # crawl at the same time; what must never happen is one slot overlapping
+  # itself. `inputs.worker` is empty on scheduled runs, hence the 'w1' default.
+  group: etsy-crawl-${{ inputs.worker || 'w1' }}
   cancel-in-progress: false
 
 jobs:
@@ -61,7 +69,8 @@ jobs:
     timeout-minutes: 45       # a 2-page slice is 14-17 min; anything longer is stuck
     env:
       PYTHONUNBUFFERED: "1"
-      PROFILE_DIR: ${{ github.workspace }}/.etsy-profile
+      PROFILE_DIR: ${{ github.workspace }}/.etsy-profile-${{ inputs.worker || 'w1' }}
+      WORKER: ${{ inputs.worker || 'w1' }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       PAGES_PER_RUN: ${{ inputs.pages || '2' }}
@@ -113,9 +122,11 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.PROFILE_DIR }}
-          key: etsy-supa-profile-v1-${{ github.run_id }}
+          # Per-slot key: two workers must never share one browser identity, or
+          # the same DataDome fingerprint starts arriving from two IPs at once.
+          key: etsy-supa-profile-${{ inputs.worker || 'w1' }}-v1-${{ github.run_id }}
           restore-keys: |
-            etsy-supa-profile-v1-
+            etsy-supa-profile-${{ inputs.worker || 'w1' }}-v1-
 
       - name: Run one slice
         id: slice
@@ -154,4 +165,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.PROFILE_DIR }}
-          key: etsy-supa-profile-v1-${{ github.run_id }}
+          key: etsy-supa-profile-${{ inputs.worker || 'w1' }}-v1-${{ github.run_id }}
