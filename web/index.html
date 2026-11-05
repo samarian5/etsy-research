@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Etsy research</title>
-<meta name="description" content="Keyword research board for Etsy — listings, momentum and a crawl queue.">
+<meta name="description" content="Keyword research board for Etsy — listings, momentum and a crawl queue you control.">
 <link rel="stylesheet" href="./styles.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛍️</text></svg>">
 </head>
@@ -13,34 +13,94 @@
 <header class="topbar">
   <div class="brand"><b>Etsy research</b><span id="board-name">board</span></div>
   <div class="spacer"></div>
-  <div class="stat"><b id="s-listings">—</b><span>listings</span></div>
-  <div class="stat"><b id="s-snaps">—</b><span>observations</span></div>
-  <div class="stat"><b id="s-queue">—</b><span>in queue</span></div>
-  <div class="stat"><b><span class="dot" id="s-dot"></span><span id="s-seen">—</span></b><span>last crawl</span></div>
-  <button class="btn ghost sm" id="token-btn" title="Write token for adding keywords">key</button>
+  <div class="stat stat-listings"><b id="s-listings">—</b><span>listings</span></div>
+  <div class="stat stat-snaps"><b id="s-snaps">—</b><span>observations</span></div>
+  <div class="stat stat-queue"><b id="s-queue">—</b><span>keywords</span></div>
+  <div class="stat stat-seen"><b><span class="dot" id="s-dot"></span><span id="s-seen">—</span></b><span>last crawl</span></div>
+  <button class="btn ghost sm" id="token-btn" title="Write token for changing the queue">key</button>
 </header>
 
 <main class="wrap">
 
-  <!-- ── queue ─────────────────────────────────────────────────────── -->
+  <!-- ── scan schedule ──────────────────────────────────────────────── -->
   <section class="panel">
-    <h2>Scan queue — every 2 hours the runner takes the next slice</h2>
+    <div class="panel-head">
+      <div>
+        <h2>Scan schedule</h2>
+        <p class="sub">Every keyword has its own timer. The runner wakes up once an hour and crawls only what is due.</p>
+      </div>
+      <div class="now" id="next-up">—</div>
+    </div>
+
     <form class="queue-form" id="kw-form" autocomplete="off">
-      <div class="field">
-        <label for="kw">Keyword</label>
+      <div class="field grow">
+        <label for="kw">Add a keyword</label>
         <input type="text" id="kw" placeholder="e.g. personalised wedding gift" required minlength="2" maxlength="80">
       </div>
       <div class="field">
-        <label for="depth">Depth (pages)</label>
-        <input type="number" id="depth" value="20" min="1" max="100">
+        <label for="kw-depth">Page depth <button type="button" class="help" data-help="depth" aria-label="What is page depth?">?</button></label>
+        <input type="number" id="kw-depth" value="20" min="1" max="100">
       </div>
       <div class="field">
-        <label for="ppr">Pages / run</label>
-        <input type="number" id="ppr" value="2" min="1" max="5">
+        <label for="kw-interval">Check every</label>
+        <select id="kw-interval"></select>
       </div>
       <button class="btn" type="submit">Add to queue</button>
     </form>
-    <div class="chips" id="chips"></div>
+
+    <div class="bulk" id="bulk" hidden>
+      <b id="bulk-count">0 selected</b>
+      <span class="bulk-label">check every</span>
+      <select id="bulk-interval" aria-label="Interval for selected keywords"></select>
+      <button class="btn sm" id="bulk-apply" type="button">Apply to selected</button>
+      <button class="btn ghost sm" id="bulk-clear" type="button">Clear</button>
+    </div>
+
+    <div class="table-wrap">
+      <table class="queue">
+        <thead>
+          <tr>
+            <th class="chk"><input type="checkbox" id="check-all" aria-label="Select all keywords"></th>
+            <th>Keyword</th>
+            <th>Check every</th>
+            <th>Depth</th>
+            <th>Lap progress</th>
+            <th>Next check</th>
+            <th>Last run</th>
+            <th class="acts"></th>
+          </tr>
+        </thead>
+        <tbody id="queue-body"></tbody>
+      </table>
+      <p class="queue-empty" id="queue-empty" hidden>No keywords yet. Add one above and the runner will pick it up within the hour.</p>
+    </div>
+
+    <div class="explainers">
+      <details class="explain" id="explain-depth">
+        <summary>What is “page depth”?</summary>
+        <div class="explain-body" id="depth-explain"></div>
+      </details>
+      <details class="explain" id="explain-interval">
+        <summary>What does “check every” change?</summary>
+        <div class="explain-body" id="interval-explain"></div>
+      </details>
+    </div>
+
+    <div class="budget">
+      <div class="budget-head">
+        <b>Today’s crawl budget</b>
+        <span id="budget-text">—</span>
+      </div>
+      <div class="meter"><i id="budget-bar"></i></div>
+      <div class="budget-foot">
+        <span id="demand-text"></span>
+        <span class="budget-set">
+          <label for="budget-input">pages/day</label>
+          <input type="number" id="budget-input" min="6" max="200" step="2">
+          <button class="btn ghost sm" id="budget-save" type="button">Save</button>
+        </span>
+      </div>
+    </div>
   </section>
 
   <!-- ── filters ───────────────────────────────────────────────────── -->
@@ -76,15 +136,22 @@
 
   <div class="grid" id="grid"></div>
   <div class="more" id="more-wrap" hidden><button class="btn ghost" id="more">Show more</button></div>
-  <div class="empty" id="empty" hidden>No listings match yet. Add a keyword above — the next run picks it up within two hours.</div>
+  <div class="empty" id="empty" hidden>No listings match yet. Add a keyword above — the next tick picks it up within the hour.</div>
 
   <!-- ── runs ──────────────────────────────────────────────────────── -->
   <section class="panel" style="margin-top:26px">
-    <h2>Recent slices</h2>
-    <table class="runs">
-      <thead><tr><th>Started</th><th>Keyword</th><th>Pages</th><th>Status</th><th>Listings</th><th>Challenges</th><th>IP</th></tr></thead>
-      <tbody id="runs"></tbody>
-    </table>
+    <div class="panel-head">
+      <div>
+        <h2>Recent slices</h2>
+        <p class="sub">Each row is one wake-up: two search pages, the listings found, and whether Etsy let us through.</p>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="runs">
+        <thead><tr><th>Started</th><th>Keyword</th><th>Pages</th><th>Result</th><th>Listings</th><th>CAPTCHAs</th></tr></thead>
+        <tbody id="runs"></tbody>
+      </table>
+    </div>
   </section>
 </main>
 
