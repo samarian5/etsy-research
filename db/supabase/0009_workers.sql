@@ -49,9 +49,11 @@ as $$
          where status = 'queued'
            and due_at <= now()
     ), live as (
+        -- 'running' is what start_run() writes; 'queued'/'in_progress' are the
+        -- GitHub-side names. Miss one and the balancer thinks every slot is free.
         select worker
           from public.runs
-         where status in ('queued', 'in_progress')
+         where status in ('running', 'queued', 'in_progress')
            and started_at > now() - interval '50 minutes'
     )
     select jsonb_build_object(
