@@ -251,7 +251,7 @@ function showGate(on) {
 async function submitGate(ev) {
   ev.preventDefault();
   const email = ($('gate-email').value || '').trim().toLowerCase();
-  const pw = $('gate-pw').value || '';
+  const pw = ($('gate-pw').value || '').trim();
   const btn = $('gate-signin');
   if (!email || !pw) { gateStatus('enter your email and password', true); return; }
   btn.disabled = true;
