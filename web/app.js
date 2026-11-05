@@ -23,11 +23,120 @@ const SORTS = {
 const state = { q: '', status: 'all', sort: 'favorites', limit: 48, offset: 0, total: 0, rows: [] };
 const $ = (id) => document.getElementById(id);
 
+/* ── session ─────────────────────────────────────────────────────────── */
+/* The board is private now: every read and every write carries the owner's
+ * session token, and the database refuses anything else. Sign-in is a magic
+ * link to the single permitted address. */
+
+const SESSION_KEY = 'etsy_session';
+const OWNER_EMAIL = 'pityailon@gmail.com';
+let SESSION = null;
+
+function loadSession() {
+  try { SESSION = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); } catch { SESSION = null; }
+  return SESSION;
+}
+
+function saveSession(s) {
+  SESSION = {
+    access_token: s.access_token,
+    refresh_token: s.refresh_token || (SESSION && SESSION.refresh_token) || null,
+    expires_at: Math.floor(Date.now() / 1000) + Number(s.expires_in || 3600),
+    email: (s.user && s.user.email) || (SESSION && SESSION.email) || OWNER_EMAIL,
+  };
+  localStorage.setItem(SESSION_KEY, JSON.stringify(SESSION));
+}
+
+function clearSession() {
+  SESSION = null;
+  localStorage.removeItem(SESSION_KEY);
+  localStorage.removeItem('etsy_token');   // leftovers from the token era
+}
+
+function sessionLive() {
+  return !!(SESSION && SESSION.access_token && SESSION.expires_at - 30 > Date.now() / 1000);
+}
+
+async function authCall(path, { method = 'POST', body } = {}) {
+  const res = await fetch(`${BASE}/auth/v1/${path}`, {
+    method,
+    headers: { apikey: ANON, 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.msg || data.error_description || data.error || `auth ${res.status}`);
+    err.status = res.status;
+    err.code = data.error_code;
+    throw err;
+  }
+  return data;
+}
+
+async function refreshSession() {
+  if (!SESSION || !SESSION.refresh_token) return false;
+  try {
+    saveSession(await authCall('token?grant_type=refresh_token', { body: { refresh_token: SESSION.refresh_token } }));
+    return true;
+  } catch {
+    clearSession();
+    return false;
+  }
+}
+
+async function ensureSession() {
+  if (sessionLive()) return true;
+  return await refreshSession();
+}
+
+function notSignedIn() {
+  const e = new Error('');
+  e.silent = true;
+  return e;
+}
+
+async function signIn(email) {
+  return authCall('otp', { body: { email, create_user: false } });
+}
+
+async function signOut() {
+  const tok = SESSION && SESSION.access_token;
+  clearSession();
+  if (tok) {
+    fetch(`${BASE}/auth/v1/logout`, { method: 'POST', headers: { apikey: ANON, Authorization: `Bearer ${tok}` } }).catch(() => {});
+  }
+  showGate(true);
+  gateStatus('signed out', false);
+}
+
+/* Supabase hands the session back in the URL fragment after a magic link. */
+function absorbLinkSession() {
+  const raw = (location.hash || '').replace(/^#/, '') || (location.search || '').replace(/^\?/, '');
+  if (!raw || !/(^|&)access_token=/.test(raw + '&')) return false;
+  const p = new URLSearchParams(raw);
+  history.replaceState(null, '', location.pathname);
+  if (p.get('error')) {
+    showGate(true);
+    gateStatus(p.get('error_description') || 'that sign-in link did not work', true);
+    return false;
+  }
+  saveSession({
+    access_token: p.get('access_token'),
+    refresh_token: p.get('refresh_token'),
+    expires_in: p.get('expires_in'),
+  });
+  return true;
+}
+
 /* ── transport ───────────────────────────────────────────────────────── */
 async function rest(path, { method = 'GET', body, count = false, prefer } = {}) {
+  if (!(await ensureSession())) {
+    showGate(true);
+    throw notSignedIn();
+  }
   const headers = {
     apikey: ANON,
-    Authorization: `Bearer ${ANON}`,
+    Authorization: `Bearer ${SESSION.access_token}`,
     'Content-Type': 'application/json',
   };
   if (count) headers.Prefer = 'count=exact';
@@ -35,6 +144,12 @@ async function rest(path, { method = 'GET', body, count = false, prefer } = {}) 
   const res = await fetch(`${BASE}/rest/v1/${path}`, {
     method, headers, body: body === undefined ? undefined : JSON.stringify(body),
   });
+  if (res.status === 401) {
+    // the access token expired mid-session; refresh once, then give up loudly
+    if (await refreshSession()) return rest(path, { method, body, count, prefer });
+    showGate(true);
+    throw notSignedIn();
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     const err = new Error(`${res.status} ${text.slice(0, 300)}`);
@@ -46,144 +161,59 @@ async function rest(path, { method = 'GET', body, count = false, prefer } = {}) 
   return { data, res };
 }
 
-/* Reading is open to anyone; every change is a token-gated RPC. That is why
-   deleting a keyword asks for the key: without it, a public page would let any
-   visitor empty your crawl queue. The dialog below tries to make that one-time
-   cost obvious instead of mysterious. */
-
-let UNLOCK_RESOLVE = null;
-
-function silent() {
-  const e = new Error('');
-  e.silent = true;
-  return e;
+async function rpc(fn, args = {}) {
+  // the functions still declare p_token (it remains a valid break-glass path),
+  // so it must be present in the payload even when the session authorises us
+  const { data } = await rest(`rpc/${fn}`, { method: 'POST', body: { p_token: null, ...args } });
+  return { data };
 }
 
-function setLocked(locked) {
-  document.body.dataset.locked = locked ? '1' : '';
-  const b = $('token-btn');
-  b.textContent = locked ? 'unlock' : 'key ✓';
-  b.title = locked ? 'Read-only — add the write token to change the queue' : 'Write token saved in this browser';
-  b.classList.toggle('locked', locked);
-  const chip = $('ro-chip');
-  if (chip) {
-    chip.textContent = locked ? '🔒 read-only' : '✎ editing';
-    chip.classList.toggle('locked', locked);
+function fail(e) {
+  if (e && e.silent) return;
+  toast(e.message === 'cancelled' ? 'cancelled' : `failed: ${e.message}`, true);
+}
+
+/* ── the sign-in gate ────────────────────────────────────────────────── */
+function gateStatus(text, bad) {
+  const el = $('gate-msg');
+  if (!el) return;
+  el.textContent = text || '';
+  el.hidden = !text;
+  el.classList.toggle('bad', !!bad);
+}
+
+function showGate(on) {
+  const gate = $('gate');
+  if (!gate) return;
+  gate.hidden = !on;
+  document.body.dataset.auth = on ? 'out' : 'in';
+  if (on) setTimeout(() => { const i = $('gate-email'); if (i && !i.value) i.value = OWNER_EMAIL; i && i.focus(); }, 30);
+}
+
+async function submitGate(ev) {
+  ev.preventDefault();
+  const email = ($('gate-email').value || '').trim().toLowerCase();
+  const btn = $('gate-send');
+  if (!email) return;
+  btn.disabled = true;
+  btn.textContent = 'sending…';
+  gateStatus('', false);
+  try {
+    await signIn(email);
+    gateStatus(`Link sent to ${email}. Open it on this device — it signs you in and brings you straight back here.`, false);
+    btn.textContent = 'sent ✓';
+  } catch (e) {
+    const msg = e.status === 429
+      ? 'Too many sign-in emails in the last hour (the free tier allows two). Wait a bit, or use the link already in your inbox.'
+      : e.status === 422
+        ? `${email} is not the account this board belongs to.`
+        : `Could not send the link: ${e.message}`;
+    gateStatus(msg, true);
+    btn.textContent = 'Sign in';
+  } finally {
+    btn.disabled = false;
+    if (btn.textContent === 'sending…') btn.textContent = 'Sign in';
   }
-}
-
-function unlockDialog(reason) {
-  return new Promise((resolve) => {
-    const dlg = $('unlock');
-    const scrim = $('unlock-scrim');
-    const inp = $('unlock-input');
-    const msg = $('unlock-msg');
-    const save = $('unlock-save');
-    const forget = $('unlock-forget');
-    const had = !!localStorage.getItem('etsy_token');
-
-    msg.textContent = reason || '';
-    msg.hidden = !reason;
-
-    // show what this browser actually holds, so "invalid token" is diagnosable
-    const state = $('unlock-state');
-    const stored = localStorage.getItem('etsy_token');
-    state.hidden = !stored;
-    if (stored) {
-      const masked = `${stored.slice(0, 4)}…${stored.slice(-4)}`;
-      state.textContent = `Saved here: ${masked} (${stored.length} characters) — checking…`;
-      rest('rpc/verify_token', { method: 'POST', body: { p_token: stored } })
-        .then(({ data }) => {
-          state.textContent = data === true
-            ? `Saved here: ${masked} (${stored.length} characters) — accepted ✓`
-            : `Saved here: ${masked} (${stored.length} characters) — REJECTED by the database. Paste a current token or an unlock link below.`;
-          state.classList.toggle('bad', data !== true);
-        })
-        .catch(() => { state.textContent = `Saved here: ${masked} (${stored.length} characters)`; });
-    }
-    inp.value = '';
-    forget.hidden = !had;
-    const link = $('unlock-link');
-    link.hidden = !had;
-    dlg.hidden = false;
-    scrim.hidden = false;
-    setTimeout(() => inp.focus(), 30);
-
-    const close = (ok) => {
-      dlg.hidden = true;
-      scrim.hidden = true;
-      inp.removeEventListener('keydown', onKey);
-      save.removeEventListener('click', submit);
-      forget.removeEventListener('click', doForget);
-      link.removeEventListener('click', copyLink);
-      $('unlock-cancel').removeEventListener('click', cancel);
-      scrim.removeEventListener('click', cancel);
-      const r = UNLOCK_RESOLVE; UNLOCK_RESOLVE = null;
-      if (r) r(ok);
-      resolve(ok);
-    };
-    const cancel = () => close(false);
-    const onKey = (e) => {
-      if (e.key === 'Escape') { e.preventDefault(); close(false); }
-      if (e.key === 'Enter') { e.preventDefault(); submit(); }
-    };
-    const copyLink = async (e) => {
-      const tk = localStorage.getItem('etsy_token');
-      if (!tk) return;
-      const url = `${location.origin}${location.pathname}#k=${encodeURIComponent(tk)}`;
-      try {
-        await navigator.clipboard.writeText(url);
-        toast('unlock link copied — open it on your phone or bookmark it');
-      } catch {
-        window.prompt('Copy this unlock link (it contains your token):', url);
-      }
-      e.currentTarget.textContent = 'Copy unlock link';
-    };
-
-    const doForget = () => {
-      localStorage.removeItem('etsy_token');
-      setLocked(true);
-      toast('token forgotten on this browser');
-      close(false);
-    };
-
-    async function submit() {
-      const v = tokenFrom(inp.value);
-      if (!v) { inp.focus(); return; }
-      save.disabled = true;
-      const label = save.textContent;
-      save.textContent = 'checking…';
-      try {
-        const { data } = await rest('rpc/verify_token', { method: 'POST', body: { p_token: v } });
-        if (data === true) {
-          localStorage.setItem('etsy_token', v);
-          setLocked(false);
-          toast('unlocked — this browser keeps the token');
-          close(true);
-        } else {
-          msg.hidden = false;
-          msg.textContent = /\s/.test(v)
-            ? 'That has spaces in it — a token is one unbroken 32-character string, and a link is best pasted whole.'
-            : `Not accepted (${v.length} characters received, ${/https?:/.test(inp.value) ? 'from a link' : 'typed'}). A token is 32 characters; a truncated link is short exactly like this.`;
-          inp.select();
-        }
-      } catch (e) {
-        msg.hidden = false;
-        msg.textContent = `Could not check the token: ${e.message}`;
-      } finally {
-        save.disabled = false;
-        save.textContent = label;
-      }
-    }
-
-    inp.addEventListener('keydown', onKey);
-    save.addEventListener('click', submit);
-    forget.addEventListener('click', doForget);
-    link.addEventListener('click', copyLink);
-    $('unlock-cancel').addEventListener('click', cancel);
-    scrim.addEventListener('click', cancel);
-    UNLOCK_RESOLVE = null;
-  });
 }
 
 function confirmDialog(title, body, okLabel = 'Confirm', danger = false) {
@@ -218,40 +248,6 @@ function confirmDialog(title, body, okLabel = 'Confirm', danger = false) {
     scrim.addEventListener('click', no);
     document.addEventListener('keydown', key);
   });
-}
-
-async function ensureUnlocked(reason) {
-  const t = localStorage.getItem('etsy_token');
-  if (t) return t;
-  if (tokenInUrl() && await tryUnlockLink()) {
-    setLocked(false);
-    return localStorage.getItem('etsy_token');
-  }
-  const ok = await unlockDialog(reason);
-  return ok ? localStorage.getItem('etsy_token') : null;
-}
-
-async function rpc(fn, args, retry = true) {
-  const t = await ensureUnlocked();
-  if (!t) throw silent();
-  try {
-    const { data } = await rest(`rpc/${fn}`, { method: 'POST', body: { ...args, p_token: t } });
-    return { data };
-  } catch (e) {
-    if (e.status === 401 && retry) {
-      localStorage.removeItem('etsy_token');
-      setLocked(true);
-      const t2 = await ensureUnlocked('That token was not accepted — it may have been rotated since you saved it. Paste the current one.');
-      if (!t2) throw silent();
-      return rpc(fn, args, false);
-    }
-    throw e;
-  }
-}
-
-function fail(e) {
-  if (e && e.silent) return;
-  fail(e);
 }
 
 /* ── helpers ─────────────────────────────────────────────────────────── */
@@ -477,18 +473,10 @@ $('queue-body').addEventListener('click', async (ev) => {
   const kw = btn.closest('tr').dataset.kw;
   try {
     if (btn.dataset.act === 'del') {
-      const had = !!localStorage.getItem('etsy_token');
-      if (!had) {
-        // the unlock dialog doubles as the confirmation: it names the keyword
-        // and states the consequence, so a second prompt would be noise
-        const ok = await unlockDialog(`“${kw}” will be dropped from the crawl queue. Listings already collected stay on the board. Enter the write token to do that.`);
-        if (!ok) return;
-      } else {
-        const ok = await confirmDialog(`Remove “${kw}”?`,
-          'It stops being crawled. Listings already collected stay on the board and can still be browsed.',
-          'Remove', true);
-        if (!ok) return;
-      }
+      const ok = await confirmDialog(`Remove “${kw}”?`,
+        'It stops being crawled. Listings already collected stay on the board and can still be browsed.',
+        'Remove', true);
+      if (!ok) return;
       await rpc('delete_keyword', { p_keyword: kw });
       toast(`“${kw}” removed from the queue`);
     } else {
@@ -498,6 +486,7 @@ $('queue-body').addEventListener('click', async (ev) => {
     }
     await Promise.all([loadQueue(), loadStats()]);
   } catch (e) {
+    if (e && e.silent) return;
     fail(e);
   }
 });
@@ -519,6 +508,7 @@ $('bulk-apply').addEventListener('click', async () => {
     toast(`${kws.length} keyword${kws.length === 1 ? '' : 's'} set to ${ivLabel(h)}` + (typeof data === 'number' ? ` (${data} updated)` : ''));
     await loadQueue();
   } catch (e) {
+    if (e && e.silent) return;
     fail(e);
   }
 });
@@ -550,6 +540,7 @@ $('budget-save').addEventListener('click', async () => {
     toast(`Daily budget set to ${v} pages`);
     await loadUsage();
   } catch (e) {
+    if (e && e.silent) return;
     fail(e);
   }
 });
@@ -730,86 +721,35 @@ async function loadRuns() {
 /* ── boot ────────────────────────────────────────────────────────────── */
 function fail(e) { toast(e.message, true); }
 
-$('token-btn').addEventListener('click', () => {
-  const had = !!localStorage.getItem('etsy_token');
-  unlockDialog(had ? 'A token is already saved here. Paste a new one to replace it, or forget it.' : '').then((ok) => {
-    if (!ok && had) unlockDialog('');
-  });
+$('gate-form').addEventListener('submit', submitGate);
+
+$('acct-btn').addEventListener('click', async () => {
+  const who = (SESSION && SESSION.email) || OWNER_EMAIL;
+  const ok = await confirmDialog('Sign out?', `This browser is signed in as ${who}. Signing out hides the board until you open a new sign-in link.`, 'Sign out', true);
+  if (ok) await signOut();
 });
-$('ro-chip').addEventListener('click', () => {
-  unlockDialog(localStorage.getItem('etsy_token')
-    ? 'Editing is unlocked on this browser. Paste a different token to replace it.'
-    : 'Reading the board needs nothing. Adding, pausing, re-scheduling or removing a keyword writes to the database — that is what the token unlocks.');
-});
-
-function tokenFrom(input) {
-  const s = String(input || '').trim();
-  // a pasted unlock link is a token with decoration around it
-  if (/^https?:\/\//i.test(s)) {
-    try {
-      const u = new URL(s);
-      const fromHash = new URLSearchParams(u.hash.replace(/^#/, '')).get('k');
-      if (fromHash) return fromHash.trim();
-      const fromQuery = u.searchParams.get('k');
-      if (fromQuery) return fromQuery.trim();
-    } catch { /* fall through to the loose match */ }
-  }
-  const m = /[#?&]k=([^&?\s]+)/.exec(s);
-  if (m) {
-    try { return decodeURIComponent(m[1]).trim(); } catch { return m[1].trim(); }
-  }
-  return s;
-}
-
-function tokenInUrl() {
-  // parse hash and query separately: gluing them together turns "?v=3" into
-  // part of the token, which is exactly how a valid link reads as invalid
-  const hash = (location.hash || '').replace(/^#/, '');
-  if (hash) {
-    const v = new URLSearchParams(hash).get('k');
-    if (v) return v.trim();
-  }
-  const q = new URLSearchParams(location.search || '').get('k');
-  return q ? q.trim() : null;
-}
-
-async function tryUnlockLink() {
-  const t = tokenInUrl();
-  if (!t) return false;
-  // strip it immediately: the address bar is the leakiest place a secret can sit
-  history.replaceState(null, '', location.pathname + location.search);
-  try {
-    const { data } = await rest('rpc/verify_token', { method: 'POST', body: { p_token: t } });
-    if (data === true) {
-      localStorage.setItem('etsy_token', t);
-      setLocked(false);
-      toast('unlocked from link — this browser is set up');
-      return true;
-    }
-    toast(`that link's token was rejected (${t.length} characters) — it may have been truncated when copied`, true);
-  } catch (e) {
-    toast(`could not check the unlock link: ${e.message}`, true);
-  }
-  return false;
-}
 
 window.addEventListener('hashchange', async () => {
-  if (!tokenInUrl()) return;
-  if (localStorage.getItem('etsy_token')) return;
-  if (await tryUnlockLink()) {
-    setLocked(false);
-    Promise.all([loadQueue(), loadStats(), loadUsage()]);
-  }
+  if (!absorbLinkSession()) return;
+  showGate(false);
+  Promise.all([loadQueue(), loadStats(), loadUsage()]).catch(fail);
+  loadListings().catch(fail);
 });
 
 (async function boot() {
-  setLocked(!localStorage.getItem('etsy_token'));
-  await tryUnlockLink();
-  setLocked(!localStorage.getItem('etsy_token'));
   if (!BASE || !ANON) {
     document.body.innerHTML = '<p style="padding:40px;font:15px system-ui">Missing <code>web/config.js</code> — it must define supabaseUrl and anonKey.</p>';
     return;
   }
+  loadSession();
+  absorbLinkSession();
+  if (!(await ensureSession())) {
+    showGate(true);
+    return;
+  }
+  showGate(false);
+  $('acct-btn').textContent = (SESSION.email || OWNER_EMAIL).split('@')[0];
+  $('acct-btn').title = `signed in as ${SESSION.email || OWNER_EMAIL}`;
   fillIntervals($('kw-interval'), 2);
   fillIntervals($('bulk-interval'), 2);
   renderExplainers();
