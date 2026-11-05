@@ -8,7 +8,7 @@
 'use strict';
 
 const CFG = window.ETSY_CONFIG || {};
-const BUILD = (document.querySelector('meta[name="build"]') || {}).content || 'dev';
+const BUILD = window.__BUILD || (document.querySelector('meta[name="build"]') || {}).content || 'dev';
 
 /* Anything that fails to load must say so on the page — a blank board is not a
  * diagnosis, and a toast that fades is not evidence. */
@@ -825,6 +825,7 @@ async function loadRuns() {
 /* ── boot ────────────────────────────────────────────────────────────── */
 
 on('gate-form', 'submit', submitGate);
+window.__gateReady = true;   // tells the inline fallback in index.html that the app is live
 
 on('pw-cancel', 'click', () => { $('pw').hidden = true; $('pw-scrim').hidden = true; });
 on('pw-scrim', 'click', () => { $('pw').hidden = true; $('pw-scrim').hidden = true; });
