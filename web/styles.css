@@ -352,3 +352,28 @@ body[data-locked="1"] #queue-body button[data-act="del"]::after { content: " �
 
 .mono-note { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
 .mono-note.bad { color: #a4402f; }
+
+/* ── sign-in gate ────────────────────────────────────────────────────── */
+.gate {
+  position: fixed; inset: 0; z-index: 80; display: grid; place-items: center;
+  padding: 22px; background: #faf6f0;
+}
+.gate-card {
+  width: min(390px, 100%); background: var(--card); border: 1px solid var(--border);
+  border-radius: 16px; padding: 30px 26px 22px; text-align: left;
+  box-shadow: 0 26px 70px -30px rgba(50, 34, 20, .4);
+}
+.gate-mark { font-size: 30px; line-height: 1; margin-bottom: 12px; }
+.gate h1 { margin: 0 0 8px; font-size: 21px; letter-spacing: -.015em; }
+.gate-sub { margin: 0 0 20px; font-size: 13.5px; line-height: 1.55; color: var(--muted); }
+.gate label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+.gate input {
+  width: 100%; padding: 11px 12px; font: 14px/1.3 inherit; color: var(--fg);
+  border: 1px solid var(--border); border-radius: 9px; background: #fff; margin-bottom: 14px;
+}
+.gate input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+.gate .btn { width: 100%; }
+.gate-msg { margin: 14px 0 0; font-size: 13px; line-height: 1.5; color: #2f6b46; }
+.gate-msg.bad { color: #a4402f; }
+.gate-foot { margin: 18px 0 0; font-size: 11.5px; line-height: 1.5; color: var(--muted); }
+body[data-auth="out"] .topbar, body[data-auth="out"] .wrap { display: none; }
