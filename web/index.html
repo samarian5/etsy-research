@@ -17,7 +17,7 @@
   <div class="stat stat-snaps"><b id="s-snaps">—</b><span>observations</span></div>
   <div class="stat stat-queue"><b id="s-queue">—</b><span>keywords</span></div>
   <div class="stat stat-seen"><b><span class="dot" id="s-dot"></span><span id="s-seen">—</span></b><span>last crawl</span></div>
-  <button class="btn ghost sm" id="token-btn" title="Write token for changing the queue">key</button>
+  <button class="btn ghost sm" id="acct-btn" title="account">account</button>
 </header>
 
 <main class="wrap">
@@ -29,7 +29,7 @@
         <h2>Scan schedule</h2>
         <p class="sub">Every keyword has its own timer. The runner wakes up once an hour and crawls only what is due.</p>
       </div>
-      <div class="now-wrap"><div class="now" id="next-up">—</div><button class="chip locked" id="ro-chip" type="button">🔒 read-only</button></div>
+      <div class="now" id="next-up">—</div>
     </div>
 
     <form class="queue-form" id="kw-form" autocomplete="off">
@@ -161,30 +161,6 @@
   <div id="drawer-body"></div>
 </aside>
 
-<!-- ── unlock dialog ─────────────────────────────────────────────────── -->
-<div class="scrim2" id="unlock-scrim" hidden></div>
-<div class="modal" id="unlock" role="dialog" aria-modal="true" aria-labelledby="unlock-title" hidden>
-  <h3 id="unlock-title">Unlock editing</h3>
-  <p class="sub" id="unlock-msg" hidden></p>
-  <p class="sub mono-note" id="unlock-state" hidden></p>
-  <p class="sub">Reading the board needs nothing. <b>Adding, pausing, re-scheduling or removing a keyword</b> writes to the database, and this page is public — so those calls need your write token, or anyone who found the link could empty your queue.</p>
-  <label for="unlock-input">Write token or unlock link</label>
-  <input type="password" id="unlock-input" autocomplete="off" spellcheck="false" placeholder="32-character token, or paste the whole link" maxlength="200">
-  <details class="hint">
-    <summary>Where do I find it?</summary>
-    <p>It is the <code>SUPABASE_WRITE_TOKEN</code> line in the <code>.env</code> on the machine that runs the crawler:</p>
-    <pre>sed -n 's/^SUPABASE_WRITE_TOKEN=//p' ~/etsy-scraper/.env</pre>
-    <p>Once it is in, <b>Copy unlock link</b> gives you a URL that unlocks any browser in one click — bookmark it on your laptop, send it to your phone. The token rides in the <code>#</code> fragment, so it is never sent to the server and is stripped from the address bar the moment the page loads.</p>
-    <p>The database stores only a SHA-256 hash of it, so the plaintext lives nowhere but that file. Your browser keeps it in <code>localStorage</code> and sends it only to your own database, which answers yes or no.</p>
-  </details>
-  <div class="modal-foot">
-    <button class="btn" id="unlock-save" type="button">Unlock</button>
-    <button class="btn ghost" id="unlock-cancel" type="button">Cancel</button>
-    <button class="btn ghost sm" id="unlock-link" type="button" hidden>Copy unlock link</button>
-    <button class="btn ghost sm" id="unlock-forget" type="button" hidden>Forget token</button>
-  </div>
-</div>
-
 <div class="scrim2" id="confirm-scrim" hidden></div>
 <div class="modal small" id="confirm" role="dialog" aria-modal="true" aria-labelledby="confirm-title" hidden>
   <h3 id="confirm-title">Are you sure?</h3>
@@ -194,6 +170,20 @@
     <button class="btn ghost" id="confirm-cancel" type="button">Cancel</button>
   </div>
 </div>
+
+<!-- ── sign-in gate ──────────────────────────────────────────────────── -->
+<section class="gate" id="gate" hidden>
+  <form class="gate-card" id="gate-form">
+    <div class="gate-mark">🛍️</div>
+    <h1>Etsy research</h1>
+    <p class="gate-sub">This board is private. Sign in with the owner address and we'll email you a one-time link — no password to remember.</p>
+    <label for="gate-email">Email</label>
+    <input type="email" id="gate-email" value="pityailon@gmail.com" autocomplete="email" spellcheck="false" required>
+    <button class="btn" id="gate-send" type="submit">Email me a sign-in link</button>
+    <p class="gate-msg" id="gate-msg" hidden></p>
+    <p class="gate-foot">Two sign-in emails per hour (free tier). The link works once and signs in this browser for 30 days.</p>
+  </form>
+</section>
 
 <div class="toast" id="toast"></div>
 
