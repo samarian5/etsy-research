@@ -109,10 +109,23 @@ class WorkflowShapeTests(unittest.TestCase):
         self.assertNotIn("chrome", plan_steps.lower())
         self.assertNotIn("xvfb", plan_steps.lower())
 
-    def test_both_crawlers_share_one_concurrency_group(self):
-        for doc, name in ((self.doc, "scrape"), (self.supa, "supa-crawl")):
-            self.assertEqual(doc["concurrency"]["group"], "etsy-crawl", name)
-            self.assertFalse(doc["concurrency"]["cancel-in-progress"], name)
+    def test_each_slot_has_its_own_concurrency_group(self):
+        """Parallelism comes from distinct group names, not from extra repos.
+
+        One group per worker slot: w2 and w3 crawl at the same time, while the
+        same slot can never overlap itself. A single hard-coded group would
+        silently serialise the whole pool, which is exactly the bug this test
+        exists to catch.
+        """
+        group = self.supa["concurrency"]["group"]
+        self.assertIn("inputs.worker", group)
+        self.assertTrue(group.startswith("etsy-crawl-"), group)
+        self.assertFalse(self.supa["concurrency"]["cancel-in-progress"])
+        # the legacy SQLite crawler keeps its own, non-colliding group
+        self.assertEqual(self.doc["concurrency"]["group"], "etsy-crawl-legacy")
+        self.assertFalse(self.doc["concurrency"]["cancel-in-progress"])
+        # and the slot must actually reach the crawler
+        self.assertIn("inputs.worker", self.supa["jobs"]["slice"]["env"]["WORKER"])
 
     def test_the_supabase_slice_writes_to_the_configured_project(self):
         env = self.supa["jobs"]["slice"]["env"]
@@ -287,6 +300,8 @@ class PlanJobTests(unittest.TestCase):
 
     def test_dispatch_stays_silent_when_nothing_is_due(self):
         src = (pathlib.Path(__file__).resolve().parent.parent / "scripts" / "dispatch_slice.py").read_text()
-        # An idle hourly tick must not create a GitHub run at all.
-        self.assertIn("anything_due", src)
-        self.assertIn("peek_due", src)
+        # An idle tick must not create a GitHub run at all: it reads the queue's
+        # own numbers and dispatches zero slots when nothing is due or the budget
+        # is spent.
+        self.assertIn("queue_health", src)
+        self.assertIn("nothing due", src)
