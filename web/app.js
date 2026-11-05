@@ -105,8 +105,34 @@ async function signOut() {
   if (tok) {
     fetch(`${BASE}/auth/v1/logout`, { method: 'POST', headers: { apikey: ANON, Authorization: `Bearer ${tok}` } }).catch(() => {});
   }
+  wipeBoard();
   showGate(true);
   gateStatus('signed out', false);
+}
+
+/* Signing out must leave nothing readable behind — not just hide the board. */
+function wipeBoard() {
+  ['s-listings', 's-snaps', 's-queue', 's-seen'].forEach(id => {
+    const el = $(id);
+    if (el) el.textContent = '—';
+  });
+  const body = $('queue-body');
+  if (body) body.innerHTML = '';
+  const next = $('next-up');
+  if (next) next.textContent = '';
+  const bt = $('budget-text');
+  if (bt) bt.textContent = '—';
+  const dt = $('demand-text');
+  if (dt) dt.textContent = '';
+  const runs = $('runs');
+  if (runs) runs.innerHTML = '';
+  if (typeof state !== 'undefined') {
+    state.rows = [];
+    state.total = 0;
+    state.offset = 0;
+    const grid = $('grid');
+    if (grid) grid.innerHTML = '';
+  }
 }
 
 /* Supabase hands the session back in the URL fragment after a magic link. */
