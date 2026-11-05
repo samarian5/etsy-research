@@ -258,7 +258,8 @@ function extractToken(raw) {
 }
 
 async function verifyPasted(raw) {
-  const s = String(raw || '').trim();
+  // Mail clients hand back HTML-escaped ampersands and hard-wrapped lines.
+  const s = String(raw || '').replace(/&amp;/gi, '&').replace(/[\r\n\t]+/g, '').trim();
   // A whole link: just follow it. That is the exact path a working click takes,
   // including the fragment Supabase hands back, so there is nothing to reimplement.
   if (/^https?:\/\//i.test(s)) {
@@ -796,7 +797,10 @@ $('gate-verify').addEventListener('click', async () => {
     loadUsage().catch(fail);
     loadRuns();
   } catch (e) {
-    gateStatus(`Could not sign in: ${e.message}`, true);
+    const m = /rate limit|429/i.test(e.message || '')
+      ? 'the email limit for this hour is used up — try again in a little while, or use the link from an earlier email'
+      : e.message;
+    gateStatus(`Could not sign in: ${m}`, true);
   } finally {
     btn.disabled = false;
     btn.textContent = 'Sign in with this';
