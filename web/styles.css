@@ -406,4 +406,10 @@ body[data-auth="pending"] #boot-splash {
 /* If app.js never runs, the failsafe in index.html sets data-auth="out"; the
    gate must then be visible even though it ships with the hidden attribute,
    otherwise the visitor gets a blank page and no explanation. */
-body[data-auth="out"] #gate { display: grid; }
+
+/* hidden must actually hide.
+   The UA rule for [hidden] loses to any author `display:` declaration, so
+   `.gate { display: grid }` kept the sign-in card painted over the board even
+   when app.js set gate.hidden = true. Every panel here is toggled through the
+   attribute, so make it authoritative once, globally. */
+[hidden] { display: none !important; }
