@@ -177,8 +177,6 @@ function absorbLinkSession() {
 
 /* ── transport ───────────────────────────────────────────────────────── */
 async function rest(path, { method = 'GET', body, count = false, prefer } = {}) {
-  const tag = $('build-tag');
-  if (tag) tag.textContent = BUILD;
   if (!(await ensureSession())) {
     showGate(true);
     throw notSignedIn();
@@ -841,6 +839,10 @@ window.addEventListener('hashchange', async () => {
 });
 
 (async function boot() {
+  // stamp first: if someone is stuck on the gate, this is the one fact that
+  // distinguishes "old cached bundle" from "new bundle, real error".
+  const stampEl = document.getElementById('build-tag');
+  if (stampEl) stampEl.textContent = BUILD;
   if (!BASE || !ANON) {
     document.body.innerHTML = '<p style="padding:40px;font:15px system-ui">Missing <code>web/config.js</code> — it must define supabaseUrl and anonKey.</p>';
     return;
