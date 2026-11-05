@@ -86,6 +86,8 @@ function unlockDialog(reason) {
     msg.hidden = !reason;
     inp.value = '';
     forget.hidden = !had;
+    const link = $('unlock-link');
+    link.hidden = !had;
     dlg.hidden = false;
     scrim.hidden = false;
     setTimeout(() => inp.focus(), 30);
@@ -96,6 +98,7 @@ function unlockDialog(reason) {
       inp.removeEventListener('keydown', onKey);
       save.removeEventListener('click', submit);
       forget.removeEventListener('click', doForget);
+      link.removeEventListener('click', copyLink);
       $('unlock-cancel').removeEventListener('click', cancel);
       scrim.removeEventListener('click', cancel);
       const r = UNLOCK_RESOLVE; UNLOCK_RESOLVE = null;
@@ -107,6 +110,19 @@ function unlockDialog(reason) {
       if (e.key === 'Escape') { e.preventDefault(); close(false); }
       if (e.key === 'Enter') { e.preventDefault(); submit(); }
     };
+    const copyLink = async (e) => {
+      const tk = localStorage.getItem('etsy_token');
+      if (!tk) return;
+      const url = `${location.origin}${location.pathname}#k=${encodeURIComponent(tk)}`;
+      try {
+        await navigator.clipboard.writeText(url);
+        toast('unlock link copied — open it on your phone or bookmark it');
+      } catch {
+        window.prompt('Copy this unlock link (it contains your token):', url);
+      }
+      e.currentTarget.textContent = 'Copy unlock link';
+    };
+
     const doForget = () => {
       localStorage.removeItem('etsy_token');
       setLocked(true);
@@ -146,6 +162,7 @@ function unlockDialog(reason) {
     inp.addEventListener('keydown', onKey);
     save.addEventListener('click', submit);
     forget.addEventListener('click', doForget);
+    link.addEventListener('click', copyLink);
     $('unlock-cancel').addEventListener('click', cancel);
     scrim.addEventListener('click', cancel);
     UNLOCK_RESOLVE = null;
@@ -704,7 +721,30 @@ $('ro-chip').addEventListener('click', () => {
     : 'Reading the board needs nothing. Adding, pausing, re-scheduling or removing a keyword writes to the database — that is what the token unlocks.');
 });
 
+async function tryUnlockLink() {
+  const m = /(?:^#|&)k=([^&]+)/.exec(location.hash || '');
+  if (!m) return false;
+  const t = decodeURIComponent(m[1]).trim();
+  // strip it immediately: the address bar is the leakiest place a secret can sit
+  history.replaceState(null, '', location.pathname + location.search);
+  try {
+    const { data } = await rest('rpc/verify_token', { method: 'POST', body: { p_token: t } });
+    if (data === true) {
+      localStorage.setItem('etsy_token', t);
+      setLocked(false);
+      toast('unlocked from link — this browser is set up');
+      return true;
+    }
+    toast('that unlock link is out of date — the token was rotated', true);
+  } catch (e) {
+    toast(`could not check the unlock link: ${e.message}`, true);
+  }
+  return false;
+}
+
 (async function boot() {
+  setLocked(!localStorage.getItem('etsy_token'));
+  await tryUnlockLink();
   setLocked(!localStorage.getItem('etsy_token'));
   if (!BASE || !ANON) {
     document.body.innerHTML = '<p style="padding:40px;font:15px system-ui">Missing <code>web/config.js</code> — it must define supabaseUrl and anonKey.</p>';
