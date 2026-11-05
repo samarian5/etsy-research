@@ -82,3 +82,30 @@ uploading anything readable.
 Code, workflow, tests and one captured Etsy page used as a test fixture. Not the
 database, not the dashboard, not the keywords (sealed in the dispatch input, hashed in
 logs), not the results (sealed tarball per run, 3-day retention).
+
+## Signing in to the hosted board
+
+The board is a single-owner app. Nothing renders until a Supabase session exists,
+and the API itself refuses anonymous reads (`anon` gets 401 on every table and RPC).
+
+1. Open https://samarian5.github.io/etsy-research/
+2. Enter the owner email and press **Send sign-in link**.
+3. Click the link in the email. It verifies on Supabase, redirects to the board with
+   the session in the URL fragment, and the app stores it (`etsy_session`), then
+   strips the fragment from the address bar.
+4. That browser stays signed in; the access token refreshes automatically every
+   60 s window and on expiry.
+
+**If the link does not work** (mail clients truncate long URLs, and GitHub Pages
+serves a 404 while it rebuilds):
+
+- `web/404.html` catches a deep/odd path and forwards to the board root *with the
+  fragment intact*, so a mangled path still signs in.
+- The gate has **"Link gave you a 404?"** — paste the whole link there and it is
+  followed directly. It accepts HTML-escaped (`&amp;`) and line-wrapped copies.
+- Landing with `#error=...` shows the reason instead of a blank gate.
+
+**Email limits.** The free built-in mailer allows ~2 sign-in emails per hour for the
+whole project. If that is exhausted the gate says so rather than failing silently.
+For routine use this does not matter (one sign-in per device, weeks apart); to
+remove the cap, configure custom SMTP in Supabase Auth settings.
