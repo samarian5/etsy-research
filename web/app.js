@@ -84,6 +84,23 @@ function unlockDialog(reason) {
 
     msg.textContent = reason || '';
     msg.hidden = !reason;
+
+    // show what this browser actually holds, so "invalid token" is diagnosable
+    const state = $('unlock-state');
+    const stored = localStorage.getItem('etsy_token');
+    state.hidden = !stored;
+    if (stored) {
+      const masked = `${stored.slice(0, 4)}…${stored.slice(-4)}`;
+      state.textContent = `Saved here: ${masked} (${stored.length} characters) — checking…`;
+      rest('rpc/verify_token', { method: 'POST', body: { p_token: stored } })
+        .then(({ data }) => {
+          state.textContent = data === true
+            ? `Saved here: ${masked} (${stored.length} characters) — accepted ✓`
+            : `Saved here: ${masked} (${stored.length} characters) — REJECTED by the database. Paste a current token or an unlock link below.`;
+          state.classList.toggle('bad', data !== true);
+        })
+        .catch(() => { state.textContent = `Saved here: ${masked} (${stored.length} characters)`; });
+    }
     inp.value = '';
     forget.hidden = !had;
     const link = $('unlock-link');
@@ -131,7 +148,7 @@ function unlockDialog(reason) {
     };
 
     async function submit() {
-      const v = inp.value.trim();
+      const v = tokenFrom(inp.value);
       if (!v) { inp.focus(); return; }
       save.disabled = true;
       const label = save.textContent;
@@ -146,8 +163,8 @@ function unlockDialog(reason) {
         } else {
           msg.hidden = false;
           msg.textContent = /\s/.test(v)
-            ? 'That has spaces in it — the token is a single 32-character string.'
-            : `That token was not accepted (${v.length} characters). Copy the whole value; it is 32 characters.`;
+            ? 'That has spaces in it — a token is one unbroken 32-character string, and a link is best pasted whole.'
+            : `Not accepted (${v.length} characters received, ${/https?:/.test(inp.value) ? 'from a link' : 'typed'}). A token is 32 characters; a truncated link is short exactly like this.`;
           inp.select();
         }
       } catch (e) {
@@ -206,6 +223,10 @@ function confirmDialog(title, body, okLabel = 'Confirm', danger = false) {
 async function ensureUnlocked(reason) {
   const t = localStorage.getItem('etsy_token');
   if (t) return t;
+  if (tokenInUrl() && await tryUnlockLink()) {
+    setLocked(false);
+    return localStorage.getItem('etsy_token');
+  }
   const ok = await unlockDialog(reason);
   return ok ? localStorage.getItem('etsy_token') : null;
 }
@@ -721,10 +742,40 @@ $('ro-chip').addEventListener('click', () => {
     : 'Reading the board needs nothing. Adding, pausing, re-scheduling or removing a keyword writes to the database — that is what the token unlocks.');
 });
 
+function tokenFrom(input) {
+  const s = String(input || '').trim();
+  // a pasted unlock link is a token with decoration around it
+  if (/^https?:\/\//i.test(s)) {
+    try {
+      const u = new URL(s);
+      const fromHash = new URLSearchParams(u.hash.replace(/^#/, '')).get('k');
+      if (fromHash) return fromHash.trim();
+      const fromQuery = u.searchParams.get('k');
+      if (fromQuery) return fromQuery.trim();
+    } catch { /* fall through to the loose match */ }
+  }
+  const m = /[#?&]k=([^&?\s]+)/.exec(s);
+  if (m) {
+    try { return decodeURIComponent(m[1]).trim(); } catch { return m[1].trim(); }
+  }
+  return s;
+}
+
+function tokenInUrl() {
+  // parse hash and query separately: gluing them together turns "?v=3" into
+  // part of the token, which is exactly how a valid link reads as invalid
+  const hash = (location.hash || '').replace(/^#/, '');
+  if (hash) {
+    const v = new URLSearchParams(hash).get('k');
+    if (v) return v.trim();
+  }
+  const q = new URLSearchParams(location.search || '').get('k');
+  return q ? q.trim() : null;
+}
+
 async function tryUnlockLink() {
-  const m = /(?:^#|&)k=([^&]+)/.exec(location.hash || '');
-  if (!m) return false;
-  const t = decodeURIComponent(m[1]).trim();
+  const t = tokenInUrl();
+  if (!t) return false;
   // strip it immediately: the address bar is the leakiest place a secret can sit
   history.replaceState(null, '', location.pathname + location.search);
   try {
@@ -735,12 +786,21 @@ async function tryUnlockLink() {
       toast('unlocked from link — this browser is set up');
       return true;
     }
-    toast('that unlock link is out of date — the token was rotated', true);
+    toast(`that link's token was rejected (${t.length} characters) — it may have been truncated when copied`, true);
   } catch (e) {
     toast(`could not check the unlock link: ${e.message}`, true);
   }
   return false;
 }
+
+window.addEventListener('hashchange', async () => {
+  if (!tokenInUrl()) return;
+  if (localStorage.getItem('etsy_token')) return;
+  if (await tryUnlockLink()) {
+    setLocked(false);
+    Promise.all([loadQueue(), loadStats(), loadUsage()]);
+  }
+});
 
 (async function boot() {
   setLocked(!localStorage.getItem('etsy_token'));
