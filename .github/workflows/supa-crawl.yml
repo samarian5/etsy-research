@@ -6,7 +6,9 @@ name: supa-crawl
 # slice instead of breaking a chain.
 on:
   schedule:
-    - cron: "17 */2 * * *"     # 12 slices/day ≈ 24 search pages, ~1.4k listings
+    - cron: "17 * * * *"       # hourly tick: the queue decides what is due, so a
+                              # keyword set to "every hour" can actually be honoured.
+                              # Idle ticks cost ~15s (the plan job skips the browser).
                               # :17 not :00 — GitHub delays schedules at the top of the hour
   workflow_dispatch:
     inputs:
@@ -31,7 +33,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Cheap pre-flight. Boots no browser: it asks the database whether any keyword is
+  # due and whether today's page budget still has room. On an hourly trigger most
+  # ticks stop here after ~15 seconds instead of paying two minutes of Chrome setup.
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      due:    ${{ steps.check.outputs.due }}
+      reason: ${{ steps.check.outputs.reason }}
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Is anything due?
+        id: check
+        run: python scripts/plan_due.py | tee -a "$GITHUB_OUTPUT"
+
   slice:
+    needs: plan
+    if: github.event_name == 'workflow_dispatch' || needs.plan.outputs.due == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45       # a 2-page slice is 14-17 min; anything longer is stuck
     env:
