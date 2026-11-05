@@ -29,7 +29,7 @@
         <h2>Scan schedule</h2>
         <p class="sub">Every keyword has its own timer. The runner wakes up once an hour and crawls only what is due.</p>
       </div>
-      <div class="now" id="next-up">—</div>
+      <div class="now-wrap"><div class="now" id="next-up">—</div><button class="chip locked" id="ro-chip" type="button">🔒 read-only</button></div>
     </div>
 
     <form class="queue-form" id="kw-form" autocomplete="off">
@@ -160,6 +160,37 @@
   <button class="close" id="drawer-close" aria-label="Close">✕</button>
   <div id="drawer-body"></div>
 </aside>
+
+<!-- ── unlock dialog ─────────────────────────────────────────────────── -->
+<div class="scrim2" id="unlock-scrim" hidden></div>
+<div class="modal" id="unlock" role="dialog" aria-modal="true" aria-labelledby="unlock-title" hidden>
+  <h3 id="unlock-title">Unlock editing</h3>
+  <p class="sub" id="unlock-msg" hidden></p>
+  <p class="sub">Reading the board needs nothing. <b>Adding, pausing, re-scheduling or removing a keyword</b> writes to the database, and this page is public — so those calls need your write token, or anyone who found the link could empty your queue.</p>
+  <label for="unlock-input">Write token</label>
+  <input type="password" id="unlock-input" autocomplete="off" spellcheck="false" placeholder="32 characters" maxlength="64">
+  <details class="hint">
+    <summary>Where do I find it?</summary>
+    <p>It is the <code>SUPABASE_WRITE_TOKEN</code> line in the <code>.env</code> on the machine that runs the crawler:</p>
+    <pre>sed -n 's/^SUPABASE_WRITE_TOKEN=//p' ~/etsy-scraper/.env</pre>
+    <p>The database stores only a SHA-256 hash of it, so the plaintext lives nowhere but that file. Your browser keeps it in <code>localStorage</code> and sends it only to your own database, which answers yes or no.</p>
+  </details>
+  <div class="modal-foot">
+    <button class="btn" id="unlock-save" type="button">Unlock</button>
+    <button class="btn ghost" id="unlock-cancel" type="button">Cancel</button>
+    <button class="btn ghost sm" id="unlock-forget" type="button" hidden>Forget token</button>
+  </div>
+</div>
+
+<div class="scrim2" id="confirm-scrim" hidden></div>
+<div class="modal small" id="confirm" role="dialog" aria-modal="true" aria-labelledby="confirm-title" hidden>
+  <h3 id="confirm-title">Are you sure?</h3>
+  <p class="sub" id="confirm-body"></p>
+  <div class="modal-foot">
+    <button class="btn" id="confirm-ok" type="button">Confirm</button>
+    <button class="btn ghost" id="confirm-cancel" type="button">Cancel</button>
+  </div>
+</div>
 
 <div class="toast" id="toast"></div>
 
