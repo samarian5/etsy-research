@@ -85,45 +85,80 @@ logs), not the results (sealed tarball per run, 3-day retention).
 
 ## Signing in to the hosted board
 
-The board is a single-owner app. Nothing renders until a Supabase session exists,
-and the API itself refuses anonymous reads (`anon` gets 401 on every table and RPC).
+The board is private: out of the box it renders a sign-in card and nothing else.
+The database enforces the same thing independently — the `anon` key can read no
+table and call no RPC (see `db/supabase/0008_owner_auth.sql`), so hiding the UI is
+convenience, not security.
+
+**Email + password.** One owner account (`settings.owner.email`), no sign-up.
 
 1. Open https://samarian5.github.io/etsy-research/
-2. Enter the owner email and press **Send sign-in link**.
-3. Click the link in the email. It verifies on Supabase, redirects to the board with
-   the session in the URL fragment, and the app stores it (`etsy_session`), then
-   strips the fragment from the address bar.
-4. That browser stays signed in; the access token refreshes automatically every
-   60 s window and on expiry.
+2. Email is prefilled; type the password and press **Sign in**.
+3. Your name appears top-right. Click it for **Change password** / **Sign out**.
+4. Signing out wipes the rendered board (cards, stats, queue) before hiding it,
+   so the numbers are not left sitting in the DOM.
 
-**If the link does not work** (mail clients truncate long URLs, and GitHub Pages
-serves a 404 while it rebuilds):
+Mechanics: `POST /auth/v1/token?grant_type=password` with the public anon key
+returns an access + refresh token; the session lives in `localStorage` under
+`etsy_session` and renews itself every 60 minutes. Requests then carry
+`Authorization: Bearer <access_token>`, which is what the RLS policies check.
+The password never leaves the browser except as that one POST.
 
-- `web/404.html` catches a deep/odd path and forwards to the board root *with the
-  fragment intact*, so a mangled path still signs in.
-- The gate has **"Link gave you a 404?"** — paste the whole link there and it is
-  followed directly. It accepts HTML-escaped (`&amp;`) and line-wrapped copies.
-- Landing with `#error=...` shows the reason instead of a blank gate.
+If you ever need to set or reset the password from a terminal:
 
-**Email limits.** The free built-in mailer allows ~2 sign-in emails per hour for the
-whole project. If that is exhausted the gate says so rather than failing silently.
-For routine use this does not matter (one sign-in per device, weeks apart); to
-remove the cap, configure custom SMTP in Supabase Auth settings.
+```sh
+# set (service key required — never put this in the browser)
+curl -X PUT "$SUPABASE_URL/auth/v1/admin/users/$OWNER_UID" \
+  -H "apikey: $SUPABASE_SERVICE_KEY" -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+  -H "Content-Type: application/json" -d '{"password":"..."}'
+
+# prove it works with the anon key only
+curl -X POST "$SUPABASE_URL/auth/v1/token?grant_type=password" \
+  -H "apikey: $SUPABASE_ANON_KEY" -H "Content-Type: application/json" \
+  -d '{"email":"pityailon@gmail.com","password":"..."}'
+```
+
+### Why not magic links
+
+Tried, and they fail for reasons outside the app: the emails' long URLs get
+truncated or re-wrapped by mail clients, a dropped path lands on a 404 that
+discards the `#access_token` fragment, the free mailer is capped at roughly two
+messages per hour, and **every new link invalidates the previous one**. A
+password has none of those failure modes and needs no email at all after setup.
+
+A collapsed "Have a code, or a link that didn't work?" box remains as a
+break-glass path: it accepts the 8-digit `email_otp` or a pasted sign-in link.
 
 ### The root redirect (why https://samarian5.github.io/ exists)
 
-A magic link redirects to `https://samarian5.github.io/etsy-research/#access_token=…`.
-Some mail clients drop the path and land on the bare root, where GitHub has no site —
-that is the "There isn't a GitHub Pages site here" page, and it discards the session
-that was riding in the fragment.
+Sign-in emails used to carry the session in the URL fragment. Mail clients
+sometimes dropped the `/etsy-research/` path entirely, so the browser landed on
+`https://samarian5.github.io/#access_token=...` — a site that did not exist,
+where GitHub's 404 page threw the fragment away and the user saw
+"There isn't a GitHub Pages site here."
 
-`scripts/deploy_root_redirect.py` publishes a user site at the root (`main` branch of
-`samarian5/samarian5.github.io`) whose page forwards to `/etsy-research/` while keeping
-`location.search` and `location.hash`. Whatever survives of the URL, the session still
-reaches the board. It is idempotent — re-running it just refreshes the page:
+`https://samarian5.github.io/` is now a real site (`samarian5/samarian5.github.io`)
+whose `index.html` and `404.html` forward to `/etsy-research/` while preserving
+`location.search` and `location.hash`. Any path that arrives at the root — or any
+unknown path under it — still reaches the board with its fragment intact.
 
-    .venv/bin/python scripts/deploy_root_redirect.py           # create/update + enable Pages
-    .venv/bin/python scripts/deploy_root_redirect.py --status  # repo + Pages state
+```sh
+python scripts/deploy_root_redirect.py --status   # check what is published
+python scripts/deploy_root_redirect.py            # publish + rebuild Pages
+```
 
-Verified: `https://samarian5.github.io/#access_token=…` → `https://samarian5.github.io/etsy-research/`
-with the fragment intact → signed in, board rendered.
+This site also keeps working if the app is ever moved to a different repo: the
+address people type does not change.
+
+### Build stamp
+
+The footer of the sign-in card prints `build <hash>`. That hash is the content
+hash of `app.js`, stamped by `scripts/deploy_pages.py` on every publish, and the
+same hash is appended to the asset URL (`app.js?v=<hash>`) to defeat the ~10
+minute Pages cache. If a sign-in *succeeds* but the board stays blank, compare
+that hash with the latest deploy before debugging anything else.
+
+`app.js` also never assumes an element exists — `<script>`s load at the end of
+the body, and every listener is attached through a guarded helper — so an
+out-of-step HTML/JS pair degrades to a missing control instead of a dead page.
+Startup failures are caught and printed in the banner with the build hash.
