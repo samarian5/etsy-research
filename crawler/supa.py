@@ -81,6 +81,16 @@ class Supa:
                           {"p_pages": pages} if pages else {})
         return rows[0] if rows else None
 
+    def queue_health(self) -> dict:
+        """Load-balancer snapshot: budget left, keywords due, live workers.
+
+        Scalar jsonb function, so PostgREST hands back an object (not a list).
+        """
+        out = self._call("POST", "/rest/v1/rpc/queue_health", {})
+        if isinstance(out, list):
+            return out[0] if out else {}
+        return out or {}
+
     def finish_slice(self, keyword: str, next_page: int, status: str | None = None,
                      listings: int = 0) -> None:
         self._call("POST", "/rest/v1/rpc/finish_slice",
@@ -123,12 +133,13 @@ class Supa:
 
     # -- runs --------------------------------------------------------------
     def start_run(self, run_id: str, keyword: str, page_from: int, page_to: int,
-                  egress_ip: str | None = None, gha_url: str | None = None) -> None:
+                  egress_ip: str | None = None, gha_url: str | None = None,
+                  worker: str | None = None) -> None:
         self._call("POST", "/rest/v1/runs", [{
             "run_id": run_id, "keyword": keyword, "page_from": page_from,
             "page_to": page_to, "status": "running",
             "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-            "egress_ip": egress_ip, "gha_url": gha_url,
+            "egress_ip": egress_ip, "gha_url": gha_url, "worker": worker,
         }], prefer="resolution=merge-duplicates,return=minimal")
 
     def finish_run(self, run_id: str, status: str, listings: int = 0, rows: int = 0,
