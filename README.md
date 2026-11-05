@@ -18,6 +18,7 @@ Research trail: [`docs/research/mintz-channel-findings.md`](docs/research/mintz-
 | Importer | ✅ `db/import_run.py` — verified idempotent (second import skipped) |
 | Dashboard | ✅ `http://pc.tail2881d9.ts.net:8787` (Tailscale) — card grid, 5-up, filters with live counts, image cache, price/favorite movement, shortlist |
 | GitHub Actions workflow | ✅ deployed to `samarian5/etsy-research` (**public** — free unlimited Actions minutes, ADR 0007); **depth-20 crawl complete: 20/20 pages, 1,289 listings** |
+| Parallel worker pool | ✅ migration 0009 — slots `w1..wN` share one Postgres queue; the dispatcher scales slots to the due backlog and stops at the daily budget (ADR 0010, supersedes single-flight) |
 | Transport security | ✅ queue sealed in the dispatch input, keywords hashed in logs, results sealed per run (`ETSY_ARTIFACT_KEY`) |
 | Self-healing | ✅ `scripts/coverage.py` audits pages from occurrence rows (discovered **and** detailed); `scripts/autopilot.py` syncs and re-queues every hole |
 | Every second day | ✅ `cron: "10 4 */2 * *"` reads `queue.sealed` from the repo — no laptop needed; polished by `scripts/publish_queue.py`, refreshed by the dashboard (ADR 0009) |
