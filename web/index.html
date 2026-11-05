@@ -173,11 +173,13 @@
     <summary>Where do I find it?</summary>
     <p>It is the <code>SUPABASE_WRITE_TOKEN</code> line in the <code>.env</code> on the machine that runs the crawler:</p>
     <pre>sed -n 's/^SUPABASE_WRITE_TOKEN=//p' ~/etsy-scraper/.env</pre>
+    <p>Once it is in, <b>Copy unlock link</b> gives you a URL that unlocks any browser in one click — bookmark it on your laptop, send it to your phone. The token rides in the <code>#</code> fragment, so it is never sent to the server and is stripped from the address bar the moment the page loads.</p>
     <p>The database stores only a SHA-256 hash of it, so the plaintext lives nowhere but that file. Your browser keeps it in <code>localStorage</code> and sends it only to your own database, which answers yes or no.</p>
   </details>
   <div class="modal-foot">
     <button class="btn" id="unlock-save" type="button">Unlock</button>
     <button class="btn ghost" id="unlock-cancel" type="button">Cancel</button>
+    <button class="btn ghost sm" id="unlock-link" type="button" hidden>Copy unlock link</button>
     <button class="btn ghost sm" id="unlock-forget" type="button" hidden>Forget token</button>
   </div>
 </div>
