@@ -109,3 +109,21 @@ serves a 404 while it rebuilds):
 whole project. If that is exhausted the gate says so rather than failing silently.
 For routine use this does not matter (one sign-in per device, weeks apart); to
 remove the cap, configure custom SMTP in Supabase Auth settings.
+
+### The root redirect (why https://samarian5.github.io/ exists)
+
+A magic link redirects to `https://samarian5.github.io/etsy-research/#access_token=…`.
+Some mail clients drop the path and land on the bare root, where GitHub has no site —
+that is the "There isn't a GitHub Pages site here" page, and it discards the session
+that was riding in the fragment.
+
+`scripts/deploy_root_redirect.py` publishes a user site at the root (`main` branch of
+`samarian5/samarian5.github.io`) whose page forwards to `/etsy-research/` while keeping
+`location.search` and `location.hash`. Whatever survives of the URL, the session still
+reaches the board. It is idempotent — re-running it just refreshes the page:
+
+    .venv/bin/python scripts/deploy_root_redirect.py           # create/update + enable Pages
+    .venv/bin/python scripts/deploy_root_redirect.py --status  # repo + Pages state
+
+Verified: `https://samarian5.github.io/#access_token=…` → `https://samarian5.github.io/etsy-research/`
+with the fragment intact → signed in, board rendered.
