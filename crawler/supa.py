@@ -67,6 +67,15 @@ class Supa:
         raise SupaError(f"{method} {path} failed after {retries} tries: {last}")
 
     # -- queue -------------------------------------------------------------
+    def peek_due(self) -> list[dict]:
+        """What a tick would claim, without claiming it. Used by the pre-flight job."""
+        return self._call("POST", "/rest/v1/rpc/peek_due", {}) or []
+
+    def usage_today(self) -> dict:
+        """Pages spent against today's budget, plus slice outcomes."""
+        rows = self._call("GET", "/rest/v1/usage_today?select=*")
+        return (rows or [{}])[0] if isinstance(rows, list) else (rows or {})
+
     def claim_slice(self, pages: int | None = None) -> dict | None:
         rows = self._call("POST", "/rest/v1/rpc/claim_slice",
                           {"p_pages": pages} if pages else {})
@@ -79,11 +88,34 @@ class Supa:
                     "p_status": status, "p_listings": listings})
 
     def add_keyword(self, keyword: str, depth: int = 20, pages_per_run: int = 2,
-                    token: str | None = None) -> object:
+                    interval_hours: int = 2, token: str | None = None) -> object:
         token = token or os.environ["SUPABASE_WRITE_TOKEN"]
         return self._call("POST", "/rest/v1/rpc/add_keyword",
                           {"p_token": token, "p_keyword": keyword, "p_depth": depth,
+                           "p_pages_per_run": pages_per_run,
+                           "p_interval_hours": interval_hours})
+
+    def update_keyword(self, keyword: str, interval_hours: int | None = None,
+                       depth: int | None = None, pages_per_run: int | None = None,
+                       token: str | None = None) -> object:
+        """Change cadence/depth for one keyword. None means 'leave that field alone'."""
+        token = token or os.environ["SUPABASE_WRITE_TOKEN"]
+        return self._call("POST", "/rest/v1/rpc/update_keyword",
+                          {"p_token": token, "p_keyword": keyword,
+                           "p_interval_hours": interval_hours, "p_depth": depth,
                            "p_pages_per_run": pages_per_run})
+
+    def set_interval_bulk(self, keywords: list[str], interval_hours: int,
+                          token: str | None = None) -> int:
+        token = token or os.environ["SUPABASE_WRITE_TOKEN"]
+        return self._call("POST", "/rest/v1/rpc/set_interval_bulk",
+                          {"p_token": token, "p_keywords": keywords,
+                           "p_interval_hours": interval_hours}) or 0
+
+    def set_page_budget(self, pages_per_day: int, token: str | None = None) -> int:
+        token = token or os.environ["SUPABASE_WRITE_TOKEN"]
+        return self._call("POST", "/rest/v1/rpc/set_page_budget",
+                          {"p_token": token, "p_pages_per_day": pages_per_day}) or 0
 
     def prune(self, keep_days: int = 7) -> int:
         return self._call("POST", "/rest/v1/rpc/prune_snapshots",
