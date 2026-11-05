@@ -112,16 +112,19 @@ async function signOut() {
 /* Supabase hands the session back in the URL fragment after a magic link. */
 function absorbLinkSession() {
   const raw = (location.hash || '').replace(/^#/, '') || (location.search || '').replace(/^\?/, '');
-  if (!raw || !/(^|&)access_token=/.test(raw + '&')) return false;
+  if (!raw) return false;
   const p = new URLSearchParams(raw);
+  const why = p.get('error_description') || p.get('error');
+  const token = p.get('access_token');
+  if (!why && !token) return false;
   history.replaceState(null, '', location.pathname);
-  if (p.get('error')) {
+  if (why) {
     showGate(true);
-    gateStatus(p.get('error_description') || 'that sign-in link did not work', true);
+    gateStatus(`${decodeURIComponent(why).replace(/\+/g, ' ')} — request a fresh link, or paste the one from your email below.`, true);
     return false;
   }
   saveSession({
-    access_token: p.get('access_token'),
+    access_token: token,
     refresh_token: p.get('refresh_token'),
     expires_in: p.get('expires_in'),
   });
@@ -214,6 +217,34 @@ async function submitGate(ev) {
     btn.disabled = false;
     if (btn.textContent === 'sending…') btn.textContent = 'Sign in';
   }
+}
+
+/* The emailed link is a long URL, and mail clients mangle long URLs. If the
+ * click lands somewhere odd (a GitHub 404, an in-app browser), the user can
+ * paste the link here and we verify it directly against GoTrue. */
+function extractToken(raw) {
+  const s = String(raw || '').trim();
+  const m = /[?&]token=([^&\s]+)/.exec(s);
+  if (m) { try { return decodeURIComponent(m[1]); } catch { return m[1]; } }
+  if (/^\d{6}$/.test(s)) return s;          // one-time code, if the template ever shows it
+  if (/^[A-Za-z0-9_-]{20,}$/.test(s)) return s;
+  return null;
+}
+
+async function verifyPasted(raw) {
+  const s = String(raw || '').trim();
+  // A whole link: just follow it. That is the exact path a working click takes,
+  // including the fragment Supabase hands back, so there is nothing to reimplement.
+  if (/^https?:\/\//i.test(s)) {
+    location.href = s;
+    return true;
+  }
+  // Otherwise treat it as a bare one-time code.
+  if (!/^\d{6}$/.test(s)) throw new Error('paste the whole link from the email, or its 6-digit code');
+  const data = await authCall('verify', { body: { type: 'magiclink', token: s, email: OWNER_EMAIL } });
+  if (!data || !data.access_token) throw new Error('the code was not accepted — request a fresh email');
+  saveSession(data);
+  return true;
 }
 
 function confirmDialog(title, body, okLabel = 'Confirm', danger = false) {
@@ -722,6 +753,30 @@ async function loadRuns() {
 function fail(e) { toast(e.message, true); }
 
 $('gate-form').addEventListener('submit', submitGate);
+$('gate-verify').addEventListener('click', async () => {
+  const btn = $('gate-verify');
+  const raw = $('gate-paste').value;
+  if (!raw.trim()) return;
+  btn.disabled = true;
+  btn.textContent = 'checking…';
+  try {
+    await verifyPasted(raw);
+    gateStatus('signed in', false);
+    showGate(false);
+    $('acct-btn').textContent = (SESSION.email || OWNER_EMAIL).split('@')[0];
+    loadListings().catch(fail);
+    loadStats().catch(fail);
+    loadQueue().catch(fail);
+    loadUsage().catch(fail);
+    loadRuns();
+  } catch (e) {
+    gateStatus(`Could not sign in: ${e.message}`, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Sign in with this';
+  }
+});
+
 
 $('acct-btn').addEventListener('click', async () => {
   const who = (SESSION && SESSION.email) || OWNER_EMAIL;
