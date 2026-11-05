@@ -105,40 +105,220 @@ async function loadStats() {
   }
 }
 
-/* ── queue ───────────────────────────────────────────────────────────── */
-async function loadKeywords() {
-  const { data } = await rest('keywords?select=keyword,depth,next_page,pass_no,status,pages_per_run,listings_seen,last_run_at&order=added_at.asc');
-  const box = $('chips');
-  if (!data || !data.length) { box.innerHTML = '<span class="meta" style="color:var(--muted);font-size:13px">Queue is empty — add a keyword to start.</span>'; return; }
-  box.innerHTML = data.map((k) => {
-    const running = k.status === 'running';
-    const page = Math.min(k.next_page, k.depth);
-    return `<span class="kw" data-kw="${esc(k.keyword)}">
-      <span class="name">${esc(k.keyword)}</span>
-      <span class="pill ${esc(k.status)}">${esc(k.status)}</span>
-      <span class="meta">p${page}/${k.depth} · pass ${k.pass_no} · ${num(k.listings_seen)} seen</span>
-      <button data-act="toggle" title="${running ? 'Pause' : 'Resume'}">${running ? '❙❙' : '▶'}</button>
-      <button data-act="del" title="Remove from queue">✕</button>
-    </span>`;
+/* ── queue / schedule ─────────────────────────────────────────────────
+ * Every keyword carries interval_hours (1–24) and due_at. The runner asks the
+ * database "what is due?" on each tick, so the board's job is only to make that
+ * schedule legible: what it will do next, how long a full lap takes, and whether
+ * the daily budget can actually pay for what has been asked.
+ */
+const PAGES_PER_SLICE = 2;          // default pages_per_run; per-keyword value wins
+const PAGE_LISTINGS = 48;           // Etsy shows ~48 results per search page
+let QUEUE = [];
+let USAGE = { pages_used: 0, pages_budget: 24 };
+
+function fillIntervals(sel, value = 2) {
+  sel.innerHTML = Array.from({ length: 24 }, (_, i) => {
+    const h = i + 1;
+    return `<option value="${h}"${h === value ? ' selected' : ''}>${ivLabel(h)}</option>`;
   }).join('');
 }
+function ivLabel(h) {
+  if (h === 1) return 'every hour';
+  if (h === 24) return 'once a day';
+  return `every ${h} hours`;
+}
+function dueLabel(k) {
+  if (k.status === 'paused') return '<span class="muted">paused</span>';
+  if (k.status === 'blocked') return '<span class="warn">parked</span>';
+  const t = k.due_at ? new Date(k.due_at).getTime() - Date.now() : 0;
+  if (t <= 60000) return '<b class="now-tag">now</b>';
+  if (t < 3600e3) return `in ${Math.round(t / 60000)} min`;
+  const h = t / 3600e3;
+  return h < 48 ? `in ${h.toFixed(h < 10 ? 1 : 0)} h` : `in ${Math.round(h / 24)} d`;
+}
+const lapSlices = (k) => Math.ceil(k.depth / (k.pages_per_run || PAGES_PER_SLICE));
+const lapHours = (k) => lapSlices(k) * k.interval_hours;
 
-$('chips').addEventListener('click', async (ev) => {
-  const btn = ev.target.closest('button');
-  if (!btn) return;
-  const kw = btn.closest('.kw').dataset.kw;
-  const act = btn.dataset.act;
+function demandPerDay() {
+  return QUEUE.filter((k) => k.status !== 'paused' && k.status !== 'blocked')
+    .reduce((sum, k) => sum + (24 / k.interval_hours) * (k.pages_per_run || PAGES_PER_SLICE), 0);
+}
+
+async function loadQueue() {
+  const { data } = await rest('keywords?select=keyword,depth,next_page,pass_no,status,pages_per_run,interval_hours,due_at,listings_seen,last_run_at&order=added_at.asc');
+  QUEUE = data || [];
+  $('queue-empty').hidden = QUEUE.length > 0;
+  $('queue-body').innerHTML = QUEUE.map((k) => {
+    const pages = k.pages_per_run || PAGES_PER_SLICE;
+    const done = Math.min(k.next_page - 1, k.depth);
+    const pct = Math.round((done / k.depth) * 100);
+    const pill = k.status === 'running' ? 'running' : k.status === 'paused' ? 'paused' : k.status === 'blocked' ? 'blocked' : 'queued';
+    const paused = k.status === 'paused';
+    return `<tr data-kw="${esc(k.keyword)}">
+      <td class="chk"><input type="checkbox" class="pick" aria-label="Select ${esc(k.keyword)}"></td>
+      <td class="kw-name">
+        <b>${esc(k.keyword)}</b>
+        <span class="pill ${pill}">${paused ? 'paused' : k.status === 'blocked' ? 'parked' : k.status === 'running' ? 'crawling' : 'scheduled'}</span>
+      </td>
+      <td><select class="iv" aria-label="Interval for ${esc(k.keyword)}" data-cur="${k.interval_hours}"></select></td>
+      <td><input class="dp" type="number" min="1" max="100" value="${k.depth}" aria-label="Depth for ${esc(k.keyword)}"></td>
+      <td class="prog">
+        <span>page ${Math.min(k.next_page, k.depth)} of ${k.depth}</span>
+        <div class="bar"><i style="width:${pct}%"></i></div>
+        <span class="tiny">${pct}% · lap ≈ ${lapHours(k) < 48 ? lapHours(k) + ' h' : Math.round(lapHours(k) / 24) + ' d'} · ${pages} pages/wake-up</span>
+      </td>
+      <td class="due">${dueLabel(k)}</td>
+      <td class="last">${ago(k.last_run_at)}</td>
+      <td class="acts">
+        <button data-act="toggle" title="${paused ? 'Resume' : 'Pause'}">${paused ? '▶' : '❙❙'}</button>
+        <button data-act="del" title="Remove from queue">✕</button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  $('queue-body').querySelectorAll('.iv').forEach((sel) => fillIntervals(sel, Number(sel.dataset.cur)));
+  syncBulk();
+  renderNextUp();
+  renderBudget();
+}
+
+function renderNextUp() {
+  const live = QUEUE.filter((k) => k.status !== 'paused' && k.status !== 'blocked');
+  const el = $('next-up');
+  if (!live.length) { el.innerHTML = '<span class="muted">nothing scheduled</span>'; return; }
+  el.innerHTML = live.slice().sort((a, b) => new Date(a.due_at) - new Date(b.due_at))
+    .slice(0, 2)
+    .map((k) => `<span class="next-chip">${esc(k.keyword)} <b>${dueLabel(k)}</b></span>`)
+    .join('');
+}
+
+function renderBudget() {
+  const used = Number(USAGE.pages_used || 0);
+  const budget = Number(USAGE.pages_budget || 24);
+  const demand = demandPerDay();
+  const pct = Math.min(100, Math.round((used / budget) * 100));
+  $('budget-text').innerHTML = `<b>${used}</b> of ${budget} search pages used today`;
+  $('budget-bar').style.width = pct + '%';
+  $('budget-bar').className = pct >= 100 ? 'full' : pct > 75 ? 'high' : '';
+  $('budget-input').value = budget;
+
+  const slicesLeft = Math.floor((budget - used) / PAGES_PER_SLICE);
+  let msg;
+  if (demand > budget) {
+    const need = Math.ceil(demand / 2) * 2;
+    msg = `<span class="warn">Your schedule asks for ${Math.round(demand)} pages/day but the budget allows ${budget}. `
+        + `Only ${Math.floor(budget / PAGES_PER_SLICE)} wake-ups fit, so slower keywords will drift. `
+        + `Raise the budget to ${need} or lengthen an interval.</span>`;
+  } else if (used >= budget) {
+    msg = `<span class="warn">Budget spent — nothing runs until midnight UTC. The schedule resumes by itself.</span>`;
+  } else {
+    msg = `<span class="ok">Schedule asks for ${Math.round(demand)} of ${budget} pages/day · `
+        + `${slicesLeft} wake-up${slicesLeft === 1 ? '' : 's'} still available today.</span>`;
+  }
+  $('demand-text').innerHTML = msg;
+}
+
+function renderExplainers() {
+  const depth = Math.max(1, Math.min(100, Number($('kw-depth').value) || 20));
+  const iv = Number($('kw-interval').value) || 2;
+  const slices = Math.ceil(depth / PAGES_PER_SLICE);
+  const lap = slices * iv;
+  const lapTxt = lap < 48 ? `${lap} hours` : `${(lap / 24).toFixed(lap % 24 ? 1 : 0)} days`;
+  $('depth-explain').innerHTML = `
+    <p><b>Depth is how far down the search results we walk for one keyword.</b>
+    Etsy returns about ${PAGE_LISTINGS} listings per page, so <b>depth ${depth}</b> means
+    pages 1–${depth} — roughly <b>${num(depth * PAGE_LISTINGS)} listings</b> before the crawler
+    starts over at page 1.</p>
+    <p>Pages 1–3 are the shops everyone already sees. The deeper pages are where newer
+    listings with rising favourite counts hide, which is usually the interesting part.
+    Depth 2–3 is a quick look; 20 is a solid default; 40+ chases the long tail and takes
+    proportionally longer to complete.</p>
+    <p class="tiny">At depth ${depth} the crawler makes ${slices} wake-ups per full lap. At
+    “${ivLabel(iv)}” that is ${lapTxt} per lap — and about
+    ${Math.round((24 / iv) * PAGES_PER_SLICE)} pages of your daily budget.</p>`;
+
+  $('interval-explain').innerHTML = `
+    <p><b>“Check every” is how often we come back for that keyword’s next two pages.</b>
+    It does not mean “crawl everything hourly”: one wake-up always fetches two search pages,
+    so an hourly keyword still walks through its depth two pages at a time.</p>
+    <p>Hourly is the most responsive — a brand-new listing can be seen within the hour and
+    its favourite count gets a fine-grained history. Once a day is enough for stable niches
+    and costs twelve times less budget.</p>
+    <p class="tiny">Total demand = (24 ÷ interval) × 2 pages for each keyword. That total has to
+    fit inside the daily crawl budget below, which is what keeps Etsy from refusing us.</p>`;
+}
+
+function selectedKeywords() {
+  return [...document.querySelectorAll('#queue-body .pick:checked')]
+    .map((c) => c.closest('tr').dataset.kw);
+}
+
+function syncBulk() {
+  const n = selectedKeywords().length;
+  $('bulk').hidden = n === 0;
+  $('bulk-count').textContent = `${n} selected`;
+  const all = document.querySelectorAll('#queue-body .pick');
+  $('check-all').checked = n > 0 && n === all.length;
+}
+
+$('queue-body').addEventListener('change', async (ev) => {
+  const el = ev.target;
+  const row = el.closest('tr');
+  if (!row) return;
+  const kw = row.dataset.kw;
+  if (el.classList.contains('pick')) { syncBulk(); return; }
   try {
-    if (act === 'del') {
-      if (!window.confirm(`Remove "${kw}" from the queue? Listings already collected stay.`)) return;
+    if (el.classList.contains('iv')) {
+      await rpc('update_keyword', { p_keyword: kw, p_interval_hours: Number(el.value) });
+      toast(`“${kw}” ${ivLabel(Number(el.value))}`);
+    } else if (el.classList.contains('dp')) {
+      const d = Math.max(1, Math.min(100, Number(el.value) || 20));
+      await rpc('update_keyword', { p_keyword: kw, p_depth: d });
+      toast(`“${kw}” depth set to ${d}`);
+    }
+    await loadQueue();
+  } catch (e) {
+    toast(e.message === 'cancelled' ? 'cancelled' : `failed: ${e.message}`, true);
+    await loadQueue();
+  }
+});
+
+$('queue-body').addEventListener('click', async (ev) => {
+  const btn = ev.target.closest('button[data-act]');
+  if (!btn) return;
+  const kw = btn.closest('tr').dataset.kw;
+  try {
+    if (btn.dataset.act === 'del') {
+      if (!window.confirm(`Remove “${kw}” from the queue?\nListings already collected stay on the board.`)) return;
       await rpc('delete_keyword', { p_keyword: kw });
-      toast(`"${kw}" removed`);
+      toast(`“${kw}” removed from the queue`);
     } else {
       const paused = btn.textContent.trim() === '▶';
       await rpc('set_keyword_status', { p_keyword: kw, p_status: paused ? 'queued' : 'paused' });
-      toast(`"${kw}" ${paused ? 'resumed' : 'paused'}`);
+      toast(`“${kw}” ${paused ? 'resumed' : 'paused'}`);
     }
-    await Promise.all([loadKeywords(), loadStats()]);
+    await Promise.all([loadQueue(), loadStats()]);
+  } catch (e) {
+    toast(e.message === 'cancelled' ? 'cancelled' : `failed: ${e.message}`, true);
+  }
+});
+
+$('check-all').addEventListener('change', (e) => {
+  document.querySelectorAll('#queue-body .pick').forEach((c) => { c.checked = e.target.checked; });
+  syncBulk();
+});
+$('bulk-clear').addEventListener('click', () => {
+  document.querySelectorAll('#queue-body .pick').forEach((c) => { c.checked = false; });
+  syncBulk();
+});
+$('bulk-apply').addEventListener('click', async () => {
+  const kws = selectedKeywords();
+  if (!kws.length) return;
+  const h = Number($('bulk-interval').value);
+  try {
+    const { data } = await rpc('set_interval_bulk', { p_keywords: kws, p_interval_hours: h });
+    toast(`${kws.length} keyword${kws.length === 1 ? '' : 's'} set to ${ivLabel(h)}` + (typeof data === 'number' ? ` (${data} updated)` : ''));
+    await loadQueue();
   } catch (e) {
     toast(e.message === 'cancelled' ? 'cancelled' : `failed: ${e.message}`, true);
   }
@@ -148,21 +328,43 @@ $('kw-form').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const kw = $('kw').value.trim();
   if (kw.length < 2) return;
-  const depth = Math.max(1, Math.min(100, Number($('depth').value) || 20));
-  const ppr = Math.max(1, Math.min(5, Number($('ppr').value) || 2));
+  const depth = Math.max(1, Math.min(100, Number($('kw-depth').value) || 20));
+  const interval = Number($('kw-interval').value) || 2;
   const btn = ev.target.querySelector('button[type=submit]');
   btn.disabled = true;
   try {
-    await rpc('add_keyword', { p_keyword: kw, p_depth: depth, p_pages_per_run: ppr });
+    await rpc('add_keyword', { p_keyword: kw, p_depth: depth, p_interval_hours: interval });
     $('kw').value = '';
-    toast(`"${kw}" queued — next run picks it up within two hours`);
-    await Promise.all([loadKeywords(), loadStats()]);
+    toast(`“${kw}” queued — ${ivLabel(interval)}, depth ${depth}`);
+    await Promise.all([loadQueue(), loadStats(), loadUsage()]);
   } catch (e) {
     toast(e.message === 'cancelled' ? 'cancelled' : `failed: ${e.message}`, true);
   } finally {
     btn.disabled = false;
   }
 });
+
+$('budget-save').addEventListener('click', async () => {
+  const v = Math.max(6, Math.min(200, Number($('budget-input').value) || 24));
+  try {
+    await rpc('set_page_budget', { p_pages_per_day: v });
+    toast(`Daily budget set to ${v} pages`);
+    await loadUsage();
+  } catch (e) {
+    toast(e.message === 'cancelled' ? 'cancelled' : `failed: ${e.message}`, true);
+  }
+});
+
+$('kw-depth').addEventListener('input', renderExplainers);
+$('kw-interval').addEventListener('change', renderExplainers);
+
+async function loadUsage() {
+  try {
+    const { data } = await rest('usage_today?select=*');
+    USAGE = (data && data[0]) || USAGE;
+  } catch (e) { /* the meter is advisory; never break the board for it */ }
+  renderBudget();
+}
 
 /* ── listings ────────────────────────────────────────────────────────── */
 function buildQuery() {
@@ -339,9 +541,24 @@ $('token-btn').addEventListener('click', () => {
     document.body.innerHTML = '<p style="padding:40px;font:15px system-ui">Missing <code>web/config.js</code> — it must define supabaseUrl and anonKey.</p>';
     return;
   }
+  fillIntervals($('kw-interval'), 2);
+  fillIntervals($('bulk-interval'), 2);
+  renderExplainers();
+
+  document.querySelectorAll('[data-help]').forEach((b) => {
+    b.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      const el = $(`explain-${b.dataset.help}`);
+      el.open = true;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  });
+
   loadListings().catch(fail);
   loadStats().catch(fail);
-  loadKeywords().catch(fail);
+  loadQueue().catch(fail);
+  loadUsage().catch(fail);
   loadRuns();
   setInterval(loadStats, 60000);
+  setInterval(() => { loadQueue().catch(() => {}); loadUsage().catch(() => {}); }, 60000);
 })();
