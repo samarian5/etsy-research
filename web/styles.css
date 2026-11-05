@@ -349,3 +349,6 @@ body[data-locked="1"] #queue-body button[data-act="del"]::after { content: " ðŸ”
 .modal.small { width: min(380px, calc(100vw - 32px)); }
 .modal .btn.danger { background: #a4402f; border-color: #a4402f; color: #fff; }
 .modal .btn.danger:hover { background: #8c3626; border-color: #8c3626; }
+
+.mono-note { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+.mono-note.bad { color: #a4402f; }
