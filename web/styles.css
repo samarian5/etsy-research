@@ -402,3 +402,8 @@ body[data-auth="pending"] #boot-splash {
   display: block; text-align: center; padding: 22vh 24px 0;
   color: var(--muted); font-family: var(--mono, ui-monospace, monospace); letter-spacing: .04em;
 }
+
+/* If app.js never runs, the failsafe in index.html sets data-auth="out"; the
+   gate must then be visible even though it ships with the hidden attribute,
+   otherwise the visitor gets a blank page and no explanation. */
+body[data-auth="out"] #gate { display: grid; }
