@@ -129,7 +129,9 @@ def main() -> int:
 
     ip = egress_ip()
     log(f"[net] egress ip {ip}")
-    supa.start_run(run_id, kw, pf, pt, egress_ip=ip, gha_url=gha_url)
+    worker = os.environ.get("WORKER") or "w1"
+    log(f"[worker] slot {worker}")
+    supa.start_run(run_id, kw, pf, pt, egress_ip=ip, gha_url=gha_url, worker=worker)
 
     try:
         rc, meta, rows = crawl(slice_, run_id)
