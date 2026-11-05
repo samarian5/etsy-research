@@ -392,3 +392,13 @@ body[data-auth="out"] .topbar, body[data-auth="out"] .wrap { display: none; }
   font-size: 13px; line-height: 1.5;
 }
 .banner.bad { background: #fbf0ee; border-color: #e5c3bd; color: #8f3423; }
+
+/* While the stored session is being checked, show neither the login card nor an
+   empty board: a signed-in visitor should never see the login page flash. */
+body[data-auth="pending"] .gate,
+body[data-auth="pending"] .wrap { display: none !important; }
+#boot-splash { display: none; }
+body[data-auth="pending"] #boot-splash {
+  display: block; text-align: center; padding: 22vh 24px 0;
+  color: var(--muted); font-family: var(--mono, ui-monospace, monospace); letter-spacing: .04em;
+}
