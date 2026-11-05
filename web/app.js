@@ -837,12 +837,13 @@ window.addEventListener('hashchange', async () => {
     try {
       await rest('rpc/page_budget', { method: 'POST', body: {} });
     } catch (e) {
-      if (e.status === 401 || /\b401\b/.test(e.message || '')) {
-        clearSession();
-        showGate(true);
-        gateStatus('that sign-in link was rejected — it may have expired. Send yourself a fresh one.', true);
-        return;
-      }
+      // The probe failed: either the token is not honoured or the network dropped.
+      // A stale session is useless either way, so clear it and say what happened.
+      clearSession();
+      showGate(true);
+      const why = /not signed in/i.test(e.message || '') ? 'the session was rejected' : (e.message || 'it could not be verified');
+      gateStatus(`That sign-in link did not work — ${why}. Send yourself a fresh one.`, true);
+      return;
     }
   }
   showGate(false);
