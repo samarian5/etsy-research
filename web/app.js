@@ -8,6 +8,21 @@
 'use strict';
 
 const CFG = window.ETSY_CONFIG || {};
+const BUILD = (document.querySelector('meta[name="build"]') || {}).content || 'dev';
+
+/* Anything that fails to load must say so on the page — a blank board is not a
+ * diagnosis, and a toast that fades is not evidence. */
+function showBanner(msg, bad = true) {
+  const el = $('banner');
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.toggle('bad', bad);
+  el.hidden = false;
+}
+function hideBanner() {
+  const el = $('banner');
+  if (el) el.hidden = true;
+}
 const BASE = String(CFG.supabaseUrl || '').replace(/\/+$/, '');
 const ANON = CFG.anonKey || '';
 
@@ -162,6 +177,8 @@ function absorbLinkSession() {
 
 /* ── transport ───────────────────────────────────────────────────────── */
 async function rest(path, { method = 'GET', body, count = false, prefer } = {}) {
+  const tag = $('build-tag');
+  if (tag) tag.textContent = BUILD;
   if (!(await ensureSession())) {
     showGate(true);
     throw notSignedIn();
@@ -868,10 +885,12 @@ window.addEventListener('hashchange', async () => {
     });
   });
 
-  loadListings().catch(fail);
-  loadStats().catch(fail);
-  loadQueue().catch(fail);
-  loadUsage().catch(fail);
+  const board = [
+    ['listings', loadListings], ['stats', loadStats], ['queue', loadQueue], ['usage', loadUsage],
+  ];
+  board.forEach(([name, fn]) => {
+    fn().then(hideBanner).catch((e) => showBanner(`${name} failed to load: ${e.message} (build ${BUILD})`));
+  });
   loadRuns();
   setInterval(loadStats, 60000);
   setInterval(() => { loadQueue().catch(() => {}); loadUsage().catch(() => {}); }, 60000);
