@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="build" content="dev">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Etsy research</title>
 <meta name="description" content="Keyword research board for Etsy — listings, momentum and a crawl queue you control.">
@@ -10,7 +11,8 @@
 </head>
 <body>
 
-<header class="topbar">
+<div id="banner" class="banner" hidden></div>
+  <header class="topbar">
   <div class="brand"><b>Etsy research</b><span id="board-name">board</span></div>
   <div class="spacer"></div>
   <div class="stat stat-listings"><b id="s-listings">—</b><span>listings</span></div>
@@ -181,6 +183,7 @@
     <input type="email" id="gate-email" value="pityailon@gmail.com" autocomplete="email" spellcheck="false" required>
     <button class="btn" id="gate-send" type="submit">Email me a sign-in link</button>
     <p class="gate-msg" id="gate-msg" hidden></p>
+    <p class="gate-foot mono-note">build <span id="build-tag">—</span></p>
     <p class="gate-foot">Two sign-in emails per hour (free tier). The link works once and signs in this browser for 30 days.</p>
     <details class="gate-alt">
       <summary>Have a code, or a link that didn't work?</summary>
