@@ -43,6 +43,15 @@ const $ = (id) => document.getElementById(id);
  * session token, and the database refuses anything else. Sign-in is a magic
  * link to the single permitted address. */
 
+/* HTML and JS are cached independently by Pages, so they can be one deploy out
+ * of step. Never let a missing element throw at load time: a mismatch must
+ * degrade to "that control is absent", not "the page is dead". */
+const on = (id, ev, fn) => {
+  const el = typeof id === 'string' ? $(id) : id;
+  if (el) el.addEventListener(ev, fn);
+  return el;
+};
+
 const SESSION_KEY = 'etsy_session';
 const OWNER_EMAIL = 'pityailon@gmail.com';
 let SESSION = null;
@@ -237,30 +246,49 @@ function showGate(on) {
   if (on) setTimeout(() => { const i = $('gate-email'); if (i && !i.value) i.value = OWNER_EMAIL; i && i.focus(); }, 30);
 }
 
+/* The primary flow: email + password. One POST, no email, no hourly cap,
+ * no fragment to lose, works identically on every device. */
 async function submitGate(ev) {
   ev.preventDefault();
   const email = ($('gate-email').value || '').trim().toLowerCase();
-  const btn = $('gate-send');
-  if (!email) return;
+  const pw = $('gate-pw').value || '';
+  const btn = $('gate-signin');
+  if (!email || !pw) { gateStatus('enter your email and password', true); return; }
   btn.disabled = true;
-  btn.textContent = 'sending…';
+  btn.textContent = 'signing in…';
   gateStatus('', false);
   try {
-    await signIn(email);
-    gateStatus(`Link sent to ${email}. Open it on this device — it signs you in and brings you straight back here.`, false);
-    btn.textContent = 'sent ✓';
+    const data = await authCall(`token?grant_type=password`, { body: { email, password: pw } });
+    if (!data || !data.access_token) throw new Error('no session returned');
+    saveSession(data);
+    $('gate-pw').value = '';
+    gateStatus('signed in', false);
+    showGate(false);
+    $('acct-btn').textContent = (SESSION.email || OWNER_EMAIL).split('@')[0];
+    startBoard();
   } catch (e) {
-    const msg = e.status === 429
-      ? 'Too many sign-in emails in the last hour (the free tier allows two). Wait a bit, or use the link already in your inbox.'
-      : e.status === 422
-        ? `${email} is not the account this board belongs to.`
-        : `Could not send the link: ${e.message}`;
+    const msg = e.status === 400 || e.code === 'invalid_grant'
+      ? 'that email and password do not match'
+      : e.status === 429
+        ? 'too many attempts — wait a minute and try again'
+        : `could not sign in: ${e.message}`;
     gateStatus(msg, true);
     btn.textContent = 'Sign in';
   } finally {
     btn.disabled = false;
-    if (btn.textContent === 'sending…') btn.textContent = 'Sign in';
+    if (btn.textContent === 'signing in…') btn.textContent = 'Sign in';
   }
+}
+
+/* Everything the board needs after a successful sign-in, in one place. */
+function startBoard() {
+  const board = [
+    ['listings', loadListings], ['stats', loadStats], ['queue', loadQueue], ['usage', loadUsage],
+  ];
+  board.forEach(([name, fn]) => {
+    fn().then(hideBanner).catch((e) => showBanner(`${name} failed to load: ${e.message} (build ${BUILD})`));
+  });
+  loadRuns();
 }
 
 /* The emailed link is a long URL, and mail clients mangle long URLs. If the
@@ -320,7 +348,7 @@ function confirmDialog(title, body, okLabel = 'Confirm', danger = false) {
       if (e.key === 'Enter') { e.preventDefault(); close(true); }
     };
     ok.addEventListener('click', yes);
-    $('confirm-cancel').addEventListener('click', no);
+    on('confirm-cancel', 'click', no);
     scrim.addEventListener('click', no);
     document.addEventListener('keydown', key);
   });
@@ -521,7 +549,7 @@ function syncBulk() {
   $('check-all').checked = n > 0 && n === all.length;
 }
 
-$('queue-body').addEventListener('change', async (ev) => {
+on('queue-body', 'change', async (ev) => {
   const el = ev.target;
   const row = el.closest('tr');
   if (!row) return;
@@ -543,7 +571,7 @@ $('queue-body').addEventListener('change', async (ev) => {
   }
 });
 
-$('queue-body').addEventListener('click', async (ev) => {
+on('queue-body', 'click', async (ev) => {
   const btn = ev.target.closest('button[data-act]');
   if (!btn) return;
   const kw = btn.closest('tr').dataset.kw;
@@ -567,15 +595,15 @@ $('queue-body').addEventListener('click', async (ev) => {
   }
 });
 
-$('check-all').addEventListener('change', (e) => {
+on('check-all', 'change', (e) => {
   document.querySelectorAll('#queue-body .pick').forEach((c) => { c.checked = e.target.checked; });
   syncBulk();
 });
-$('bulk-clear').addEventListener('click', () => {
+on('bulk-clear', 'click', () => {
   document.querySelectorAll('#queue-body .pick').forEach((c) => { c.checked = false; });
   syncBulk();
 });
-$('bulk-apply').addEventListener('click', async () => {
+on('bulk-apply', 'click', async () => {
   const kws = selectedKeywords();
   if (!kws.length) return;
   const h = Number($('bulk-interval').value);
@@ -589,7 +617,7 @@ $('bulk-apply').addEventListener('click', async () => {
   }
 });
 
-$('kw-form').addEventListener('submit', async (ev) => {
+on('kw-form', 'submit', async (ev) => {
   ev.preventDefault();
   const kw = $('kw').value.trim();
   if (kw.length < 2) return;
@@ -609,7 +637,7 @@ $('kw-form').addEventListener('submit', async (ev) => {
   }
 });
 
-$('budget-save').addEventListener('click', async () => {
+on('budget-save', 'click', async () => {
   const v = Math.max(6, Math.min(200, Number($('budget-input').value) || 24));
   try {
     await rpc('set_page_budget', { p_pages_per_day: v });
@@ -621,8 +649,8 @@ $('budget-save').addEventListener('click', async () => {
   }
 });
 
-$('kw-depth').addEventListener('input', renderExplainers);
-$('kw-interval').addEventListener('change', renderExplainers);
+on('kw-depth', 'input', renderExplainers);
+on('kw-interval', 'change', renderExplainers);
 
 async function loadUsage() {
   try {
@@ -695,12 +723,12 @@ async function loadListings(append = false) {
 
 /* ── interactions ────────────────────────────────────────────────────── */
 let searchTimer;
-$('q').addEventListener('input', (e) => {
+on('q', 'input', (e) => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => { state.q = e.target.value; loadListings().catch(fail); }, 260);
 });
 
-$('seg').addEventListener('click', (e) => {
+on('seg', 'click', (e) => {
   const b = e.target.closest('button');
   if (!b) return;
   [...$('seg').children].forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
@@ -708,10 +736,10 @@ $('seg').addEventListener('click', (e) => {
   loadListings().catch(fail);
 });
 
-$('sort').addEventListener('change', (e) => { state.sort = e.target.value; loadListings().catch(fail); });
-$('more').addEventListener('click', () => { state.offset += state.limit; loadListings(true).catch(fail); });
+on('sort', 'change', (e) => { state.sort = e.target.value; loadListings().catch(fail); });
+on('more', 'click', () => { state.offset += state.limit; loadListings(true).catch(fail); });
 
-$('grid').addEventListener('click', async (e) => {
+on('grid', 'click', async (e) => {
   const el = e.target.closest('[data-act]');
   if (!el) return;
   const cardEl = el.closest('.card');
@@ -774,8 +802,8 @@ function closeDrawer() {
   $('drawer').setAttribute('aria-hidden', 'true');
   document.body.style.overflow = '';
 }
-$('drawer-close').addEventListener('click', closeDrawer);
-$('scrim').addEventListener('click', closeDrawer);
+on('drawer-close', 'click', closeDrawer);
+on('scrim', 'click', closeDrawer);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
 
 /* ── runs ────────────────────────────────────────────────────────────── */
@@ -796,8 +824,47 @@ async function loadRuns() {
 
 /* ── boot ────────────────────────────────────────────────────────────── */
 
-$('gate-form').addEventListener('submit', submitGate);
-$('gate-verify').addEventListener('click', async () => {
+on('gate-form', 'submit', submitGate);
+
+on('pw-cancel', 'click', () => { $('pw').hidden = true; $('pw-scrim').hidden = true; });
+on('pw-scrim', 'click', () => { $('pw').hidden = true; $('pw-scrim').hidden = true; });
+on('pw-save', 'click', async () => {
+  const a = $('pw-new').value, b = $('pw-new2').value;
+  const msg = $('pw-msg');
+  if (a.length < 6) { msg.textContent = 'use at least 6 characters'; return; }
+  if (a !== b) { msg.textContent = 'the two passwords do not match'; return; }
+  const btn = $('pw-save');
+  btn.disabled = true; btn.textContent = 'saving…';
+  try {
+    await changePassword(a);
+    msg.textContent = 'password changed — use it next time you sign in';
+    $('pw-new').value = ''; $('pw-new2').value = '';
+  } catch (e) {
+    msg.textContent = `could not change: ${e.message}`;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Save password';
+  }
+});
+
+on('gate-send', 'click', async () => {
+  const email = ($('gate-email').value || '').trim().toLowerCase();
+  const btn = $('gate-send');
+  btn.disabled = true;
+  btn.textContent = 'sending…';
+  try {
+    await signIn(email);
+    gateStatus(`Link sent to ${email}. You can also use the code in that email.`, false);
+    btn.textContent = 'sent ✓';
+  } catch (e) {
+    gateStatus(e.status === 429
+      ? 'the hourly email limit is used up — use your password instead, or try later'
+      : `could not send: ${e.message}`, true);
+    btn.textContent = 'Email me a link instead';
+  } finally {
+    btn.disabled = false;
+  }
+});
+on('gate-verify', 'click', async () => {
   const btn = $('gate-verify');
   const raw = $('gate-paste').value;
   if (!raw.trim()) return;
@@ -825,11 +892,44 @@ $('gate-verify').addEventListener('click', async () => {
 });
 
 
-$('acct-btn').addEventListener('click', async () => {
+on('acct-btn', 'click', () => {
   const who = (SESSION && SESSION.email) || OWNER_EMAIL;
-  const ok = await confirmDialog('Sign out?', `This browser is signed in as ${who}. Signing out hides the board until you open a new sign-in link.`, 'Sign out', true);
-  if (ok) await signOut();
+  const txt = $('acct-who');
+  if (txt) txt.textContent = who;
+  if ($('acct')) { $('acct').hidden = false; $('acct-scrim').hidden = false; }
 });
+
+on('acct-close', 'click', () => { if ($('acct')) { $('acct').hidden = true; $('acct-scrim').hidden = true; } });
+on('acct-scrim', 'click', () => { if ($('acct')) { $('acct').hidden = true; $('acct-scrim').hidden = true; } });
+on('acct-pw', 'click', () => { if ($('acct')) { $('acct').hidden = true; $('acct-scrim').hidden = true; } openPasswordDialog(); });
+on('acct-out', 'click', async () => {
+  if ($('acct')) { $('acct').hidden = true; $('acct-scrim').hidden = true; }
+  await signOut();
+});
+
+async function changePassword(next) {
+  if (!SESSION) throw new Error('not signed in');
+  const res = await fetch(`${BASE}/auth/v1/user`, {
+    method: 'PUT',
+    headers: { apikey: ANON, Authorization: `Bearer ${SESSION.access_token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: next }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.msg || data.error_description || `auth ${res.status}`);
+  return true;
+}
+
+function openPasswordDialog() {
+  const dlg = $('pw');
+  const scrim = $('pw-scrim');
+  if (!dlg) return;
+  $('pw-msg').textContent = '';
+  $('pw-new').value = '';
+  $('pw-new2').value = '';
+  dlg.hidden = false;
+  scrim.hidden = false;
+  $('pw-new').focus();
+}
 
 window.addEventListener('hashchange', async () => {
   if (!absorbLinkSession()) return;
@@ -839,6 +939,7 @@ window.addEventListener('hashchange', async () => {
 });
 
 (async function boot() {
+  try {
   // stamp first: if someone is stuck on the gate, this is the one fact that
   // distinguishes "old cached bundle" from "new bundle, real error".
   const stampEl = document.getElementById('build-tag');
@@ -872,10 +973,12 @@ window.addEventListener('hashchange', async () => {
     }
   }
   showGate(false);
-  $('acct-btn').textContent = (SESSION.email || OWNER_EMAIL).split('@')[0];
-  $('acct-btn').title = `signed in as ${SESSION.email || OWNER_EMAIL}`;
-  fillIntervals($('kw-interval'), 2);
-  fillIntervals($('bulk-interval'), 2);
+  if ($('acct-btn')) {
+    $('acct-btn').textContent = (SESSION.email || OWNER_EMAIL).split('@')[0];
+    $('acct-btn').title = `signed in as ${SESSION.email || OWNER_EMAIL}`;
+  }
+  if ($('kw-interval')) fillIntervals($('kw-interval'), 2);
+  if ($('bulk-interval')) fillIntervals($('bulk-interval'), 2);
   renderExplainers();
 
   document.querySelectorAll('[data-help]').forEach((b) => {
@@ -887,13 +990,14 @@ window.addEventListener('hashchange', async () => {
     });
   });
 
-  const board = [
-    ['listings', loadListings], ['stats', loadStats], ['queue', loadQueue], ['usage', loadUsage],
-  ];
-  board.forEach(([name, fn]) => {
-    fn().then(hideBanner).catch((e) => showBanner(`${name} failed to load: ${e.message} (build ${BUILD})`));
-  });
-  loadRuns();
+  startBoard();
   setInterval(loadStats, 60000);
   setInterval(() => { loadQueue().catch(() => {}); loadUsage().catch(() => {}); }, 60000);
+  } catch (e) {
+    // never leave the page in neither-state: show the gate with the real reason
+    showGate(true);
+    gateStatus(`the page failed to start: ${e.message} (build ${BUILD})`, true);
+    showBanner(`startup error: ${e.message}`, true);
+    throw e;
+  }
 })();
