@@ -3,6 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="build" content="dev">
+<script>
+  // Record failures before app.js runs: without this a thrown boot() looks
+  // exactly like "signed in but the board never appeared".
+  window.__errs = [];
+  addEventListener('error', (e) => window.__errs.push(`${e.message} @ ${e.filename}:${e.lineno}`));
+  addEventListener('unhandledrejection', (e) => window.__errs.push(`promise: ${(e.reason && e.reason.message) || e.reason}`));
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Etsy research</title>
 <meta name="description" content="Keyword research board for Etsy — listings, momentum and a crawl queue you control.">
@@ -178,24 +185,50 @@
   <form class="gate-card" id="gate-form">
     <div class="gate-mark">🛍️</div>
     <h1>Etsy research</h1>
-    <p class="gate-sub">This board is private. Sign in with the owner address and we'll email you a one-time link — no password to remember.</p>
+    <p class="gate-sub">Private board. Sign in with the owner email and password — no email links needed.</p>
     <label for="gate-email">Email</label>
-    <input type="email" id="gate-email" value="pityailon@gmail.com" autocomplete="email" spellcheck="false" required>
-    <button class="btn" id="gate-send" type="submit">Email me a sign-in link</button>
+    <input type="email" id="gate-email" value="pityailon@gmail.com" autocomplete="username" spellcheck="false" required>
+    <label for="gate-pw">Password</label>
+    <input type="password" id="gate-pw" autocomplete="current-password" placeholder="your password" required>
+    <button class="btn" id="gate-signin" type="submit">Sign in</button>
     <p class="gate-msg" id="gate-msg" hidden></p>
     <p class="gate-foot mono-note">build <span id="build-tag">—</span></p>
-    <p class="gate-foot">Two sign-in emails per hour (free tier). The link works once and signs in this browser for 30 days.</p>
     <details class="gate-alt">
-      <summary>Have a code, or a link that didn't work?</summary>
-      <p>Type the code from the email, or paste the whole link. Either one signs you in without depending on the click working.</p>
+      <summary>Forgot the password, or use a one-time code</summary>
+      <p>Type the code from a sign-in email, paste a sign-in link, or send yourself a fresh link.</p>
       <input type="text" id="gate-paste" placeholder="8-digit code, or the whole link" spellcheck="false" autocomplete="off">
       <button class="btn ghost" id="gate-verify" type="button">Sign in with this</button>
+      <button class="btn ghost" id="gate-send" type="button">Email me a link instead</button>
     </details>
   </form>
 </section>
 
 <div class="toast" id="toast"></div>
 
+<div class="scrim2" id="acct-scrim" hidden></div>
+<div class="modal small" id="acct" hidden role="dialog" aria-modal="true" aria-labelledby="acct-title">
+  <h2 id="acct-title">Account</h2>
+  <p class="mono-note">Signed in as <b id="acct-who">—</b></p>
+  <div class="modal-actions">
+    <button class="btn ghost" id="acct-close" type="button">Close</button>
+    <button class="btn ghost" id="acct-pw" type="button">Change password</button>
+    <button class="btn danger" id="acct-out" type="button">Sign out</button>
+  </div>
+</div>
+
+<div class="scrim2" id="pw-scrim" hidden></div>
+<div class="modal small" id="pw" hidden role="dialog" aria-modal="true" aria-labelledby="pw-title">
+  <h2 id="pw-title">Change password</h2>
+  <label for="pw-new">New password</label>
+  <input type="password" id="pw-new" autocomplete="new-password" placeholder="at least 6 characters">
+  <label for="pw-new2">Repeat it</label>
+  <input type="password" id="pw-new2" autocomplete="new-password">
+  <p class="mono-note" id="pw-msg"></p>
+  <div class="modal-actions">
+    <button class="btn ghost" id="pw-cancel" type="button">Cancel</button>
+    <button class="btn" id="pw-save" type="button">Save password</button>
+  </div>
+</div>
 <script src="./config.js"></script>
 <script src="./app.js"></script>
 </body>
