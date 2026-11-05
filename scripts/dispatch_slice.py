@@ -20,8 +20,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 OWNER, REPO = "samarian5", "etsy-research"
 WORKFLOW = "supa-crawl.yml"
@@ -58,6 +61,26 @@ def busy() -> tuple[bool, str]:
     return False, "idle"
 
 
+def anything_due() -> tuple[bool, str]:
+    """Ask the database, not the clock. An idle hourly tick must cost nothing at all."""
+    try:
+        from crawler.supa import Supa
+        supa = Supa()
+        usage = supa.usage_today()
+        used, budget = usage.get("pages_used", 0), usage.get("pages_budget", 24)
+        if used >= budget:
+            return False, f"daily page budget spent ({used}/{budget})"
+        due = supa.peek_due()
+        if not due:
+            return False, "nothing due"
+        nxt = due[0]
+        return True, f"{len(due)} due, first page {nxt['next_page']}/{nxt['depth']}"
+    except Exception as e:                                  # noqa: BLE001
+        # Never let a database hiccup stop the crawl: dispatch and let the runner
+        # make the same decision with the same data.
+        return True, f"queue check failed ({type(e).__name__}), dispatching anyway"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--force", action="store_true")
@@ -67,11 +90,17 @@ def main() -> int:
     ap.add_argument("--profile", default="warm")
     args = ap.parse_args()
 
+    work, why_work = anything_due()
+    if not work and not args.force:
+        print(f"[dispatch] skipped — {why_work}")
+        return 0
+    print(f"[dispatch] due — {why_work}")
+
     is_busy, why = busy()
     if is_busy and not args.force:
         print(f"[dispatch] skipped — {why}")
         return 0
-    print(f"[dispatch] {why}")
+    print(f"[dispatch] runner {why}")
 
     if args.status:
         return 0
