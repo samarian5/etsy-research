@@ -28,7 +28,8 @@ permissions:
   actions: write            # required to chain the next chunk
 
 concurrency:
-  group: etsy-crawl         # single-flight: never two crawls at once (ADR 0001)
+  group: etsy-crawl-legacy  # dispatch-only SQLite crawler: its own group so it can
+                            # never collide with a pool slot (etsy-crawl-w1..wN)
   cancel-in-progress: false
 
 jobs:
