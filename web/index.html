@@ -9,7 +9,12 @@
   window.__errs = [];
   addEventListener('error', (e) => window.__errs.push(`${e.message} @ ${e.filename}:${e.lineno}`));
   // boot failsafe: if app.js never resolves the session, show the gate anyway
-  setTimeout(() => { if (document.body.dataset.auth === 'pending') document.body.dataset.auth = 'out'; }, 7000);
+  setTimeout(() => {
+    if (document.body.dataset.auth !== 'pending') return;
+    document.body.dataset.auth = 'out';
+    var g = document.getElementById('gate');
+    if (g) g.hidden = false;   // [hidden] now really hides, so clear it
+  }, 7000);
   addEventListener('unhandledrejection', (e) => window.__errs.push(`promise: ${(e.reason && e.reason.message) || e.reason}`));
 </script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -261,6 +266,10 @@
     }
     function boot(ver) {
       window.__BUILD = ver || '';
+      // same reason as the scripts: a content-hashed href defeats the 10-minute
+      // cache even when the shell itself is stale
+      var css = document.querySelector('link[href*="styles.css"]');
+      if (css && ver) css.href = './styles.css?v=' + ver;
       return load('config.js', ver).then(function () { return load('app.js', ver); });
     }
     fetch('./version.json?t=' + Date.now(), { cache: 'no-store' })
