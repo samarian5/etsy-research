@@ -1,6 +1,7 @@
 """Chunked-queue arithmetic: the chain must resume exactly once per page."""
 from __future__ import annotations
 
+import pathlib
 import sys
 import unittest
 from pathlib import Path
@@ -83,18 +84,30 @@ class WorkflowShapeTests(unittest.TestCase):
         # concurrency group, so scrape.yml must stay dispatch-only.
         self.assertNotIn("schedule", triggers)
 
-    def test_the_supabase_workflow_owns_the_two_hour_cadence(self):
+    def test_the_supabase_workflow_owns_the_cadence(self):
         triggers = self.supa[True]
         cron = triggers["schedule"][0]["cron"]
-        # Assert the cadence, not the exact minute. GitHub delays schedules at the
-        # top of the hour, so the minute is deliberately offset (:17); pinning the
-        # literal string here just means any such tuning breaks the suite instead
-        # of the thing it is supposed to protect.
+        # Assert the cadence, not the exact minute. The trigger is hourly because a
+        # keyword may be set to "every hour"; the queue's due_at decides what actually
+        # runs, so an hourly tick does not mean hourly crawling of everything.
         minute, hours = cron.split()[0], cron.split()[1]
-        self.assertEqual(hours, "*/2", f"not a two-hourly schedule: {cron}")
+        self.assertEqual(hours, "*", f"not an hourly tick: {cron}")
         self.assertTrue(minute.isdigit(), f"schedule must pin one minute: {cron}")
         self.assertNotEqual(minute, "0", "avoid :00 — GitHub congests the top of the hour")
         self.assertIn("workflow_dispatch", triggers)
+
+    def test_an_idle_tick_costs_no_browser(self):
+        """The pre-flight job must exist and gate the crawl, or an hourly trigger
+        would boot Chrome 24 times a day to discover there is nothing to do."""
+        jobs = self.supa["jobs"]
+        self.assertIn("plan", jobs)
+        self.assertEqual(jobs["slice"]["needs"], "plan")
+        self.assertIn("needs.plan.outputs.due", jobs["slice"]["if"])
+        plan_steps = " ".join(s.get("run", "") + s.get("uses", "") for s in jobs["plan"]["steps"])
+        self.assertIn("plan_due.py", plan_steps)
+        # the plan job must not install a browser
+        self.assertNotIn("chrome", plan_steps.lower())
+        self.assertNotIn("xvfb", plan_steps.lower())
 
     def test_both_crawlers_share_one_concurrency_group(self):
         for doc, name in ((self.doc, "scrape"), (self.supa, "supa-crawl")):
@@ -260,3 +273,20 @@ class InputTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PlanJobTests(unittest.TestCase):
+    """The pre-flight runs on every hourly tick, and its output goes to public logs."""
+
+    def test_plan_never_echoes_a_keyword(self):
+        src = (pathlib.Path(__file__).resolve().parent.parent / "scripts" / "plan_due.py").read_text()
+        # REDACT_KEYWORDS only covers the crawl step; the plan job runs before it,
+        # so the pre-flight must simply never print a keyword.
+        self.assertNotIn("keyword=", src)
+        self.assertNotIn("{due[0]['keyword']}", src)
+
+    def test_dispatch_stays_silent_when_nothing_is_due(self):
+        src = (pathlib.Path(__file__).resolve().parent.parent / "scripts" / "dispatch_slice.py").read_text()
+        # An idle hourly tick must not create a GitHub run at all.
+        self.assertIn("anything_due", src)
+        self.assertIn("peek_due", src)
