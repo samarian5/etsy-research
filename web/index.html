@@ -166,9 +166,10 @@
 <div class="modal" id="unlock" role="dialog" aria-modal="true" aria-labelledby="unlock-title" hidden>
   <h3 id="unlock-title">Unlock editing</h3>
   <p class="sub" id="unlock-msg" hidden></p>
+  <p class="sub mono-note" id="unlock-state" hidden></p>
   <p class="sub">Reading the board needs nothing. <b>Adding, pausing, re-scheduling or removing a keyword</b> writes to the database, and this page is public — so those calls need your write token, or anyone who found the link could empty your queue.</p>
-  <label for="unlock-input">Write token</label>
-  <input type="password" id="unlock-input" autocomplete="off" spellcheck="false" placeholder="32 characters" maxlength="64">
+  <label for="unlock-input">Write token or unlock link</label>
+  <input type="password" id="unlock-input" autocomplete="off" spellcheck="false" placeholder="32-character token, or paste the whole link" maxlength="200">
   <details class="hint">
     <summary>Where do I find it?</summary>
     <p>It is the <code>SUPABASE_WRITE_TOKEN</code> line in the <code>.env</code> on the machine that runs the crawler:</p>
