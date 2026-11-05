@@ -46,24 +46,174 @@ async function rest(path, { method = 'GET', body, count = false, prefer } = {}) 
   return { data, res };
 }
 
-function writeToken(force = false) {
-  let t = localStorage.getItem('etsy_token');
-  if (!t || force) {
-    t = window.prompt('Write token — the SUPABASE_WRITE_TOKEN value from your .env.\nIt is stored only in this browser.');
-    if (!t) throw new Error('cancelled');
-    localStorage.setItem('etsy_token', t.trim());
-    t = t.trim();
-  }
-  return t;
+/* Reading is open to anyone; every change is a token-gated RPC. That is why
+   deleting a keyword asks for the key: without it, a public page would let any
+   visitor empty your crawl queue. The dialog below tries to make that one-time
+   cost obvious instead of mysterious. */
+
+let UNLOCK_RESOLVE = null;
+
+function silent() {
+  const e = new Error('');
+  e.silent = true;
+  return e;
 }
 
-async function rpc(fn, args) {
+function setLocked(locked) {
+  document.body.dataset.locked = locked ? '1' : '';
+  const b = $('token-btn');
+  b.textContent = locked ? 'unlock' : 'key ✓';
+  b.title = locked ? 'Read-only — add the write token to change the queue' : 'Write token saved in this browser';
+  b.classList.toggle('locked', locked);
+  const chip = $('ro-chip');
+  if (chip) {
+    chip.textContent = locked ? '🔒 read-only' : '✎ editing';
+    chip.classList.toggle('locked', locked);
+  }
+}
+
+function unlockDialog(reason) {
+  return new Promise((resolve) => {
+    const dlg = $('unlock');
+    const scrim = $('unlock-scrim');
+    const inp = $('unlock-input');
+    const msg = $('unlock-msg');
+    const save = $('unlock-save');
+    const forget = $('unlock-forget');
+    const had = !!localStorage.getItem('etsy_token');
+
+    msg.textContent = reason || '';
+    msg.hidden = !reason;
+    inp.value = '';
+    forget.hidden = !had;
+    dlg.hidden = false;
+    scrim.hidden = false;
+    setTimeout(() => inp.focus(), 30);
+
+    const close = (ok) => {
+      dlg.hidden = true;
+      scrim.hidden = true;
+      inp.removeEventListener('keydown', onKey);
+      save.removeEventListener('click', submit);
+      forget.removeEventListener('click', doForget);
+      $('unlock-cancel').removeEventListener('click', cancel);
+      scrim.removeEventListener('click', cancel);
+      const r = UNLOCK_RESOLVE; UNLOCK_RESOLVE = null;
+      if (r) r(ok);
+      resolve(ok);
+    };
+    const cancel = () => close(false);
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); close(false); }
+      if (e.key === 'Enter') { e.preventDefault(); submit(); }
+    };
+    const doForget = () => {
+      localStorage.removeItem('etsy_token');
+      setLocked(true);
+      toast('token forgotten on this browser');
+      close(false);
+    };
+
+    async function submit() {
+      const v = inp.value.trim();
+      if (!v) { inp.focus(); return; }
+      save.disabled = true;
+      const label = save.textContent;
+      save.textContent = 'checking…';
+      try {
+        const { data } = await rest('rpc/verify_token', { method: 'POST', body: { p_token: v } });
+        if (data === true) {
+          localStorage.setItem('etsy_token', v);
+          setLocked(false);
+          toast('unlocked — this browser keeps the token');
+          close(true);
+        } else {
+          msg.hidden = false;
+          msg.textContent = /\s/.test(v)
+            ? 'That has spaces in it — the token is a single 32-character string.'
+            : `That token was not accepted (${v.length} characters). Copy the whole value; it is 32 characters.`;
+          inp.select();
+        }
+      } catch (e) {
+        msg.hidden = false;
+        msg.textContent = `Could not check the token: ${e.message}`;
+      } finally {
+        save.disabled = false;
+        save.textContent = label;
+      }
+    }
+
+    inp.addEventListener('keydown', onKey);
+    save.addEventListener('click', submit);
+    forget.addEventListener('click', doForget);
+    $('unlock-cancel').addEventListener('click', cancel);
+    scrim.addEventListener('click', cancel);
+    UNLOCK_RESOLVE = null;
+  });
+}
+
+function confirmDialog(title, body, okLabel = 'Confirm', danger = false) {
+  return new Promise((resolve) => {
+    const dlg = $('confirm');
+    const scrim = $('confirm-scrim');
+    $('confirm-title').textContent = title;
+    $('confirm-body').textContent = body;
+    const ok = $('confirm-ok');
+    ok.textContent = okLabel;
+    ok.classList.toggle('danger', !!danger);
+    dlg.hidden = false;
+    scrim.hidden = false;
+    setTimeout(() => ok.focus(), 30);
+    const close = (v) => {
+      dlg.hidden = true;
+      scrim.hidden = true;
+      ok.removeEventListener('click', yes);
+      $('confirm-cancel').removeEventListener('click', no);
+      scrim.removeEventListener('click', no);
+      document.removeEventListener('keydown', key);
+      resolve(v);
+    };
+    const yes = () => close(true);
+    const no = () => close(false);
+    const key = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); close(false); }
+      if (e.key === 'Enter') { e.preventDefault(); close(true); }
+    };
+    ok.addEventListener('click', yes);
+    $('confirm-cancel').addEventListener('click', no);
+    scrim.addEventListener('click', no);
+    document.addEventListener('keydown', key);
+  });
+}
+
+async function ensureUnlocked(reason) {
+  const t = localStorage.getItem('etsy_token');
+  if (t) return t;
+  const ok = await unlockDialog(reason);
+  return ok ? localStorage.getItem('etsy_token') : null;
+}
+
+async function rpc(fn, args, retry = true) {
+  const t = await ensureUnlocked();
+  if (!t) throw silent();
   try {
-    return await rest(`rpc/${fn}`, { method: 'POST', body: { ...args, p_token: writeToken() } });
+    const { data } = await rest(`rpc/${fn}`, { method: 'POST', body: { ...args, p_token: t } });
+    return { data };
   } catch (e) {
-    if (e.status === 401) return rest(`rpc/${fn}`, { method: 'POST', body: { ...args, p_token: writeToken(true) } });
+    if (e.status === 401 && retry) {
+      localStorage.removeItem('etsy_token');
+      setLocked(true);
+      const t2 = await ensureUnlocked('That token was not accepted — it may have been rotated since you saved it. Paste the current one.');
+      if (!t2) throw silent();
+      return rpc(fn, args, false);
+    }
     throw e;
   }
+}
+
+function fail(e) {
+  if (e && e.silent) return;
+  fail(e);
 }
 
 /* ── helpers ─────────────────────────────────────────────────────────── */
@@ -278,7 +428,7 @@ $('queue-body').addEventListener('change', async (ev) => {
     }
     await loadQueue();
   } catch (e) {
-    toast(e.message === 'cancelled' ? 'cancelled' : `failed: ${e.message}`, true);
+    fail(e);
     await loadQueue();
   }
 });
@@ -289,7 +439,18 @@ $('queue-body').addEventListener('click', async (ev) => {
   const kw = btn.closest('tr').dataset.kw;
   try {
     if (btn.dataset.act === 'del') {
-      if (!window.confirm(`Remove “${kw}” from the queue?\nListings already collected stay on the board.`)) return;
+      const had = !!localStorage.getItem('etsy_token');
+      if (!had) {
+        // the unlock dialog doubles as the confirmation: it names the keyword
+        // and states the consequence, so a second prompt would be noise
+        const ok = await unlockDialog(`“${kw}” will be dropped from the crawl queue. Listings already collected stay on the board. Enter the write token to do that.`);
+        if (!ok) return;
+      } else {
+        const ok = await confirmDialog(`Remove “${kw}”?`,
+          'It stops being crawled. Listings already collected stay on the board and can still be browsed.',
+          'Remove', true);
+        if (!ok) return;
+      }
       await rpc('delete_keyword', { p_keyword: kw });
       toast(`“${kw}” removed from the queue`);
     } else {
@@ -299,7 +460,7 @@ $('queue-body').addEventListener('click', async (ev) => {
     }
     await Promise.all([loadQueue(), loadStats()]);
   } catch (e) {
-    toast(e.message === 'cancelled' ? 'cancelled' : `failed: ${e.message}`, true);
+    fail(e);
   }
 });
 
@@ -320,7 +481,7 @@ $('bulk-apply').addEventListener('click', async () => {
     toast(`${kws.length} keyword${kws.length === 1 ? '' : 's'} set to ${ivLabel(h)}` + (typeof data === 'number' ? ` (${data} updated)` : ''));
     await loadQueue();
   } catch (e) {
-    toast(e.message === 'cancelled' ? 'cancelled' : `failed: ${e.message}`, true);
+    fail(e);
   }
 });
 
@@ -338,7 +499,7 @@ $('kw-form').addEventListener('submit', async (ev) => {
     toast(`“${kw}” queued — ${ivLabel(interval)}, depth ${depth}`);
     await Promise.all([loadQueue(), loadStats(), loadUsage()]);
   } catch (e) {
-    toast(e.message === 'cancelled' ? 'cancelled' : `failed: ${e.message}`, true);
+    fail(e);
   } finally {
     btn.disabled = false;
   }
@@ -351,7 +512,7 @@ $('budget-save').addEventListener('click', async () => {
     toast(`Daily budget set to ${v} pages`);
     await loadUsage();
   } catch (e) {
-    toast(e.message === 'cancelled' ? 'cancelled' : `failed: ${e.message}`, true);
+    fail(e);
   }
 });
 
@@ -532,11 +693,19 @@ async function loadRuns() {
 function fail(e) { toast(e.message, true); }
 
 $('token-btn').addEventListener('click', () => {
-  writeToken(true);
-  toast('token saved in this browser');
+  const had = !!localStorage.getItem('etsy_token');
+  unlockDialog(had ? 'A token is already saved here. Paste a new one to replace it, or forget it.' : '').then((ok) => {
+    if (!ok && had) unlockDialog('');
+  });
+});
+$('ro-chip').addEventListener('click', () => {
+  unlockDialog(localStorage.getItem('etsy_token')
+    ? 'Editing is unlocked on this browser. Paste a different token to replace it.'
+    : 'Reading the board needs nothing. Adding, pausing, re-scheduling or removing a keyword writes to the database — that is what the token unlocks.');
 });
 
 (async function boot() {
+  setLocked(!localStorage.getItem('etsy_token'));
   if (!BASE || !ANON) {
     document.body.innerHTML = '<p style="padding:40px;font:15px system-ui">Missing <code>web/config.js</code> — it must define supabaseUrl and anonKey.</p>';
     return;
