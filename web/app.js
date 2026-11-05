@@ -954,7 +954,7 @@ window.addEventListener('hashchange', async () => {
   if (!(await ensureSession())) {
     showGate(true);
     if (!document.getElementById('gate-msg').innerText) {
-      gateStatus('not signed in in this browser yet — use the code from the email, or send a link.', false);
+      gateStatus('not signed in in this browser yet — enter the email and password from your setup email.', false);
     }
     return;
   }
