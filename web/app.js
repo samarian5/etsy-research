@@ -777,7 +777,6 @@ async function loadRuns() {
 }
 
 /* ── boot ────────────────────────────────────────────────────────────── */
-function fail(e) { toast(e.message, true); }
 
 $('gate-form').addEventListener('submit', submitGate);
 $('gate-verify').addEventListener('click', async () => {
@@ -827,10 +826,24 @@ window.addEventListener('hashchange', async () => {
     return;
   }
   loadSession();
-  absorbLinkSession();
+  const freshLink = absorbLinkSession();
   if (!(await ensureSession())) {
     showGate(true);
     return;
+  }
+  if (freshLink) {
+    // A link can carry a token the server no longer honours (already rotated,
+    // revoked, or simply malformed). Say so instead of showing a blank gate.
+    try {
+      await rest('rpc/page_budget', { method: 'POST', body: {} });
+    } catch (e) {
+      if (e.status === 401 || /\b401\b/.test(e.message || '')) {
+        clearSession();
+        showGate(true);
+        gateStatus('that sign-in link was rejected — it may have expired. Send yourself a fresh one.', true);
+        return;
+      }
+    }
   }
   showGate(false);
   $('acct-btn').textContent = (SESSION.email || OWNER_EMAIL).split('@')[0];
