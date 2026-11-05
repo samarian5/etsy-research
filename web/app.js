@@ -255,7 +255,7 @@ function extractToken(raw) {
   const s = String(raw || '').trim();
   const m = /[?&]token=([^&\s]+)/.exec(s);
   if (m) { try { return decodeURIComponent(m[1]); } catch { return m[1]; } }
-  if (/^\d{6}$/.test(s)) return s;          // one-time code, if the template ever shows it
+  if (/^\d{6,8}$/.test(s)) return s;        // the one-time code Supabase emails alongside the link
   if (/^[A-Za-z0-9_-]{20,}$/.test(s)) return s;
   return null;
 }
@@ -270,9 +270,9 @@ async function verifyPasted(raw) {
     return true;
   }
   // Otherwise treat it as a bare one-time code.
-  if (!/^\d{6}$/.test(s)) throw new Error('paste the whole link from the email, or its 6-digit code');
+  if (!/^\d{6,8}$/.test(s)) throw new Error('paste the whole link, or the code from the email');
   const data = await authCall('verify', { body: { type: 'magiclink', token: s, email: OWNER_EMAIL } });
-  if (!data || !data.access_token) throw new Error('the code was not accepted — request a fresh email');
+  if (!data || !data.access_token) throw new Error('that code was not accepted — it may already be used. Request a fresh one.');
   saveSession(data);
   return true;
 }
@@ -832,6 +832,9 @@ window.addEventListener('hashchange', async () => {
   const freshLink = absorbLinkSession();
   if (!(await ensureSession())) {
     showGate(true);
+    if (!document.getElementById('gate-msg').innerText) {
+      gateStatus('not signed in in this browser yet — use the code from the email, or send a link.', false);
+    }
     return;
   }
   if (freshLink) {
