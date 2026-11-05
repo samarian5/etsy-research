@@ -146,7 +146,10 @@ function absorbLinkSession() {
   history.replaceState(null, '', location.pathname);
   if (why) {
     showGate(true);
-    gateStatus(`${decodeURIComponent(why).replace(/\+/g, ' ')} — request a fresh link, or paste the one from your email below.`, true);
+    const expired = /invalid|expired/i.test(why);
+    gateStatus(expired
+      ? 'That link was already used, replaced by a newer sign-in email, or is more than an hour old. Only the most recent email works — send a fresh one below.'
+      : `${decodeURIComponent(why).replace(/\+/g, ' ')} — send a fresh link below.`, true);
     return false;
   }
   saveSession({
