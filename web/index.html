@@ -185,7 +185,7 @@
 
 <!-- ── sign-in gate ──────────────────────────────────────────────────── -->
 <section class="gate" id="gate" hidden>
-  <form class="gate-card" id="gate-form">
+  <form class="gate-card" id="gate-form" onsubmit="return window.__gateReady ? true : window.__gateStale()">
     <div class="gate-mark">🛍️</div>
     <h1>Etsy research</h1>
     <p class="gate-sub">Private board. Sign in with the owner email and password — no email links needed.</p>
@@ -195,7 +195,7 @@
     <input type="password" id="gate-pw" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="your password" required>
     <button class="btn" id="gate-signin" type="submit">Sign in</button>
     <p class="gate-msg" id="gate-msg" hidden></p>
-    <p class="gate-foot mono-note">build <span id="build-tag">—</span></p>
+    <p class="gate-foot mono-note">build <span id="build-tag">not loaded</span></p>
     <details class="gate-alt">
       <summary>Forgot the password, or use a one-time code</summary>
       <p>Type the code from a sign-in email, paste a sign-in link, or send yourself a fresh link.</p>
@@ -232,7 +232,42 @@
     <button class="btn" id="pw-save" type="button">Save password</button>
   </div>
 </div>
-<script src="./config.js"></script>
-<script src="./app.js"></script>
+<script>
+  // "I click Sign in and nothing happens" means app.js never ran: GitHub Pages
+  // caches HTML for 10 minutes, so a stale index.html can point at a stale (or
+  // missing) app.js while the page still looks finished.
+  //   * the build id is fetched fresh every load and the scripts loaded with it,
+  //     so an old shell still executes the newest code;
+  //   * if the app never binds the form, pressing the button explains itself
+  //     instead of quietly reloading the page.
+  window.__gateStale = function () {
+    var m = document.getElementById('gate-msg');
+    if (m) {
+      m.hidden = false;
+      m.innerHTML = 'This page did not finish loading. <a href="./?v=' + Date.now() +
+        '">Reload the latest version</a> and try again.';
+    }
+    return false;
+  };
+
+  (function () {
+    function load(file, ver) {
+      return new Promise(function (resolve) {
+        var el = document.createElement('script');
+        el.src = './' + file + (ver ? '?v=' + ver : '');
+        el.onload = el.onerror = resolve;
+        document.body.appendChild(el);
+      });
+    }
+    function boot(ver) {
+      window.__BUILD = ver || '';
+      return load('config.js', ver).then(function () { return load('app.js', ver); });
+    }
+    fetch('./version.json?t=' + Date.now(), { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : {}; })
+      .then(function (v) { return boot(v && v.build); })
+      .catch(function () { return boot(''); });
+  })();
+</script>
 </body>
 </html>
