@@ -24,7 +24,38 @@ Research trail: [`docs/research/mintz-channel-findings.md`](docs/research/mintz-
 | Every second day | ✅ `cron: "10 4 */2 * *"` reads `queue.sealed` from the repo — no laptop needed; polished by `scripts/publish_queue.py`, refreshed by the dashboard (ADR 0009) |
 | Movement tracking | ✅ `fav_delta` / `price_delta` between crawls, `Momentum Δ` sort, same columns in the CSV |
 | Hang protection | ✅ per-page `navigate()` deadline (90 s) + stall watchdog (`STALL_MINUTES`, exit 3) + 90-minute job ceiling — a wedged CDP call now costs minutes, not hours (ADR 0008) |
+| Signal extraction (0010) | ✅ 10 new listing columns from HTML that was already being downloaded — listing date, listing-level vs shop-level reviews, image count, stock, shipping origin, sponsored flag. Zero extra page loads |
+| Honest flags (0011) | ✅ the whole-page regexes that invented 44 % star-sellers and 27 % bestsellers are gone; the bogus values were nulled, not guessed |
+| Keyword discovery (0010) | ✅ every search page's related-search chips land in `keyword_candidates` — the market naming its own niches |
 | Deployment path | ✅ Composio GitHub connection — no PAT anywhere; `scripts/deploy.py` pushes, `scripts/sync.py` pulls |
+
+## What one page load buys you
+
+Page loads are the scarce resource, so the parser takes everything the page
+already prints. Nothing below costs an extra request.
+
+| Field | Where it lives in the HTML | What it answers |
+|---|---|---|
+| `listing_date` | `div.wt-text-caption` → "Listed on Nov 3, 2026" | Is this niche fresh or saturated? (`share_listed_90d`) |
+| `reviews` | JSON-LD `aggregateRating.reviewCount` | How much social proof does *this listing* have |
+| `shop_reviews`, `shop_rating` | embedded `shop_reviews_count`, shop card | How big is the seller behind it |
+| `image_count` | JSON-LD `image[]` | How hard the listing is to beat on presentation |
+| `availability`, `quantity` | JSON-LD `offers` | In stock, and how deep the run is |
+| `shipping_origin` | JSON-LD `shippingDetails` | Domestic vs overseas shipping promise |
+| `price_original_usd`, `discount_pct` | price block, "Sale Price … (50 % off)" | Running a permanent discount, or a real price |
+| `is_ad` | card label "Ad" | Sponsored slot — exclude before reading rank |
+| `is_bestseller`, `is_star_seller` | `div#bestseller`, `p.wt-text-title-01` **read from the element** | Proven demand vs proven seller |
+| `free_shipping` | the delivery block only | Offer strength, without the site-wide promo |
+| related searches | `a[href*="search?q="]` chips | The next keywords to crawl, free |
+
+Two traps this replaces, both measured on the saved corpus:
+
+* **Whole-page regexes lie.** "Star Sellers have an outstanding track record…" is
+  help text shipped on every listing page, so `\bstar seller\b` matched 44 % of the
+  catalogue. The badge is a specific `<p>`; the explainer is inside `<clg-popover>`.
+* **Two review counts share one page.** 2,253 reviews on the listing and 15,362 on
+  the shop are different facts; storing either one as "reviews" silently turns a
+  big seller into a popular product.
 
 ## The dashboard
 
