@@ -86,10 +86,12 @@ class IngestShapeTests(unittest.TestCase):
 
     def test_unknown_keys_are_not_forwarded(self):
         s = FakeSupa()
-        s.ingest([row(raw_payload_path="payloads/x.json.gz", shop_rating=4.9)], "r", "kw")
+        s.ingest([row(raw_payload_path="payloads/x.json.gz", extraction={"a": 1},
+                      secret_field="nope")], "r", "kw")
         sent = s.calls[0][2]["p_rows"][0]
         self.assertNotIn("raw_payload_path", sent)
-        self.assertNotIn("shop_rating", sent)
+        self.assertNotIn("extraction", sent)
+        self.assertNotIn("secret_field", sent)
 
 
 class QueueTests(unittest.TestCase):
