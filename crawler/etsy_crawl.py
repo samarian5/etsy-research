@@ -148,6 +148,7 @@ def extract_cards(soup, page_no: int) -> list[dict]:
             "price_text": None,
             "position": len(cards) + 1,
             "page": page_no,
+            "is_ad": None,
         })
 
     # Strategy 2: enrich from the known card containers (price/title per card).
@@ -179,6 +180,15 @@ def extract_cards(soup, page_no: int) -> list[dict]:
                 enriched += 1
         if enriched:
             break
+
+    # Strategy 3: the sponsored label. Paid slots sit inside the organic list, so
+    # "my listing is #4 for this keyword" is only true if #1-#3 were not ads.
+    by_id = {c["listing_id"]: c for c in cards}
+    for node in soup.select("[data-listing-id]"):
+        card = by_id.get(node.get("data-listing-id"))
+        if not card or card.get("is_ad") is not None or node.find("h3") is None:
+            continue
+        card["is_ad"] = bool(node.find(string=re.compile(r"^\s*Ad\s*$")))
     return cards
 
 
@@ -233,6 +243,70 @@ def _breadcrumb_path(soup) -> str | None:
     return None
 
 
+def _ld_product(soup) -> dict:
+    """The Product block of Etsy's JSON-LD (pages ship Product + VideoObject + Breadcrumb)."""
+    if not soup:
+        return {}
+    for sc in soup.find_all("script", type="application/ld+json"):
+        try:
+            d = json.loads(sc.string or "{}")
+        except Exception:                                  # noqa: BLE001
+            continue
+        for it in (d if isinstance(d, list) else [d]):
+            if isinstance(it, dict) and it.get("@type") == "Product":
+                return it
+    return {}
+
+
+def scoped_badges(soup) -> dict:
+    """Badges read from their element, never from the page text.
+
+    Etsy prints the Star Seller *explainer* ("Star Sellers have an outstanding
+    track record…") on listing pages, and labels related cards "Bestseller", so a
+    whole-page regex reports badges that the listing does not have — the old code
+    put 44% of all listings in "star seller".
+
+    Verified against saved pages: the real badges are
+      bestseller   <div id="bestseller"><clg-signal><clg-icon name="bestseller">
+      star seller  <p class="wt-text-title-01">Star Seller</p>, outside any popover
+    """
+    out = {"is_bestseller": False, "is_star_seller": False}
+    if not soup:
+        return out
+    if soup.select_one("div#bestseller clg-icon[name='bestseller']"):
+        out["is_bestseller"] = True
+    for p in soup.select("p.wt-text-title-01"):
+        if "star seller" in p.get_text(" ", strip=True).lower():
+            in_tooltip = (p.find_parent("clg-popover") is not None
+                          or p.find_parent(class_="clg-popover") is not None)
+            if not in_tooltip:
+                out["is_star_seller"] = True
+                break
+    return out
+
+
+def extract_related(soup, keyword: str, limit: int = 24) -> list[str]:
+    """The "related searches" chips Etsy prints with the results.
+
+    Free keyword research: the market naming its own adjacent niches, on a page
+    that has already been downloaded. Pagination links are filtered out.
+    """
+    out: list[str] = []
+    if not soup:
+        return out
+    kw = (keyword or "").strip().lower()
+    for a in soup.select('a[href*="search?q="]'):
+        t = " ".join(a.get_text(" ", strip=True).split())
+        if not t or t.isdigit() or t.lower() in {"next", "previous", "back"}:
+            continue
+        if len(t) > 60 or t.lower() == kw or t in out:
+            continue
+        out.append(t)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def extract_detail(html: str, soup, url: str) -> dict:
     """Layered extraction: JSON-LD -> embedded state -> DOM text. Records which fired."""
     out: dict = {
@@ -243,6 +317,8 @@ def extract_detail(html: str, soup, url: str) -> dict:
         "shop_review_count": None, "shop_rating": None, "shop_name": None,
         "shop_url": None, "is_bestseller": None, "is_star_seller": None,
         "free_shipping": None, "variation_count": None, "images_count": None,
+        "listing_date": None, "availability": None, "quantity": None,
+        "shipping_origin": None,
         "category_path": None, "description": None, "description_html": None,
         "thumbnail_url": None,
         "extraction": {"jsonld": False, "embedded": False, "dom": False, "warnings": []},
@@ -276,6 +352,28 @@ def extract_detail(html: str, soup, url: str) -> dict:
             img = img.get("contentURL") or img.get("url")
         if isinstance(img, str):
             out["thumbnail_url"] = img
+
+        # JSON-LD extras that the DOM only shows indirectly.
+        off = ld.get("offers") or {}
+        if isinstance(off, list):
+            off = off[0] if off else {}
+        if isinstance(off, dict):
+            av = off.get("availability")
+            if av:
+                out["availability"] = str(av).rsplit("/", 1)[-1]
+            if off.get("eligibleQuantity") is not None:
+                try:
+                    out["quantity"] = int(str(off["eligibleQuantity"]).split(".")[0])
+                except ValueError:
+                    pass
+            ship = off.get("shippingDetails") or {}
+            if isinstance(ship, list):
+                ship = ship[0] if ship else {}
+            if isinstance(ship, dict):
+                origin = ship.get("shippingOrigin") or {}
+                if isinstance(origin, dict):
+                    bits = [origin.get("addressRegion"), origin.get("addressCountry")]
+                    out["shipping_origin"] = "/".join(b for b in bits if b) or None
 
     # 2) Embedded state (Etsy ships a big JSON blob; keys survive markup redesigns)
     embedded_patterns = {
@@ -338,9 +436,39 @@ def extract_detail(html: str, soup, url: str) -> dict:
         # Category path from the BreadcrumbList JSON-LD block.
         if not out["category_path"]:
             out["category_path"] = _breadcrumb_path(soup)
-    out["is_bestseller"] = bool(re.search(r"\bbestseller\b", page_text, re.I))
-    out["is_star_seller"] = bool(re.search(r"\bstar seller\b", page_text, re.I))
-    out["free_shipping"] = bool(re.search(r"\bfree shipping\b", page_text, re.I))
+    # Badges must come from their element. The page text carries the Star Seller
+    # explainer and labels on related cards, which is how 44% of listings ended up
+    # flagged as star sellers.
+    badges = scoped_badges(soup)
+    out["is_bestseller"] = badges["is_bestseller"]
+    out["is_star_seller"] = badges["is_star_seller"]
+
+    # Free shipping belongs to the delivery block; the site-wide
+    # "Free shipping on orders over $35" promo must not count.
+    ship_blob = ""
+    if soup:
+        node = (soup.select_one('[data-selector="shipping-and-returns"]')
+                or soup.select_one('[data-buy-box-region="shipping"]')
+                or soup.select_one("#shipping-and-policies"))
+        ship_blob = node.get_text(" ", strip=True) if node else page_text
+    out["free_shipping"] = bool(re.search(r"\bfree shipping\b", ship_blob, re.I)) and not \
+        bool(re.search(r"free shipping on orders? over", ship_blob, re.I))
+
+    # "Listed on Nov 3, 2026" — verified identical across three separate crawls of
+    # the same listing, so it is the listing's date, not the page's render date.
+    if soup and not out["listing_date"]:
+        m = re.search(r"listed on ([A-Z][a-z]{2} \d{1,2}, \d{4})", page_text, re.I)
+        if m:
+            try:
+                out["listing_date"] = datetime.strptime(m.group(1), "%b %d, %Y").date().isoformat()
+            except ValueError:
+                pass
+
+    # Shop reviews as printed in the shop card: "(2.3k reviews)".
+    if soup and out["shop_review_count"] is None:
+        m = re.search(r"\(([\d.,]+[kKmM]?)\s+reviews?\)", page_text)
+        if m:
+            out["shop_review_count"] = parse_count(m.group(1))
 
     # Favorites fallback: the OpenGraph description states it when the listing has
     # any ("... has 1,100 favorites from Etsy shoppers"). New listings omit the
@@ -460,6 +588,7 @@ class Crawl:
         self.challenge_budget = int(os.environ.get("MAX_CHALLENGES") or 6)
         self.occurrences = 0
         self.seen: dict[str, dict] = {}   # listing_id -> card (first sighting wins)
+        self.related: dict[str, int] = {}  # search suggestions Etsy printed, with counts
         # Listings already collected earlier in this chain: they still count as
         # "seen" so a chunk never pays for a page load it already made, and the
         # coverage stop keeps working across chunk boundaries.
@@ -816,6 +945,8 @@ class Crawl:
                 with gzip.open(self.out / "html" / f"page_{page_no}.html.gz", "wt",
                                encoding="utf-8") as fh:
                     fh.write(str(soup))
+            for phrase in extract_related(soup, self.args.keyword):
+                self.related[phrase] = self.related.get(phrase, 0) + 1
             cards = extract_cards(soup, page_no)
             new = [c for c in cards if c["listing_id"] not in self.seen]
             for c in new:
@@ -914,6 +1045,12 @@ class Crawl:
                 "free_shipping": detail["free_shipping"],
                 "variation_count": detail["variation_count"],
                 "images_count": detail["images_count"],
+                "image_count": detail["images_count"],
+                "listing_date": detail["listing_date"],
+                "availability": detail["availability"],
+                "quantity": detail["quantity"],
+                "shipping_origin": detail["shipping_origin"],
+                "is_ad": card.get("is_ad"),
                 "category_path": detail["category_path"],
                 "thumbnail_url": detail["thumbnail_url"],
                 "description": detail["description"],
@@ -993,6 +1130,7 @@ class Crawl:
             "unique_listings": len(self.seen),
             "challenges": self.challenges,
             "egress_ip": os.environ.get("EGRESS_IP") or None,
+            "related": sorted(self.related, key=lambda k: -self.related[k])[:40],
             "requests_used": self.args.max_requests - self.budget_left,
             "budget": self.args.max_requests,
         }
