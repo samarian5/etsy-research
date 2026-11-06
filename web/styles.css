@@ -413,3 +413,7 @@ body[data-auth="pending"] #boot-splash {
    when app.js set gate.hidden = true. Every panel here is toggled through the
    attribute, so make it authoritative once, globally. */
 [hidden] { display: none !important; }
+
+/* Sponsored cards: same grid, different meaning. Muted, not shouty. */
+.tag.ad { border-color: #b08968; color: #8a5a2b; text-transform: uppercase; letter-spacing: .04em; }
+.tag.quiet { opacity: .72; }
