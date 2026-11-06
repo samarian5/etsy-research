@@ -53,6 +53,9 @@ Two traps this replaces, both measured on the saved corpus:
 * **Whole-page regexes lie.** "Star Sellers have an outstanding track record…" is
   help text shipped on every listing page, so `\bstar seller\b` matched 44 % of the
   catalogue. The badge is a specific `<p>`; the explainer is inside `<clg-popover>`.
+* **Some markup is in every page.** `div.clg-profile-avatar__badge-star-seller`
+  ships inside a `<template>` even when the shop is not a star seller, so trusting
+  that class reports 100 % of the catalogue. Only rendered label text counts.
 * **Two review counts share one page.** 2,253 reviews on the listing and 15,362 on
   the shop are different facts; storing either one as "reviews" silently turns a
   big seller into a popular product.
