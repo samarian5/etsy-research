@@ -136,7 +136,7 @@ async function signOut() {
 
 /* Signing out must leave nothing readable behind — not just hide the board. */
 function wipeBoard() {
-  ['s-listings', 's-snaps', 's-queue', 's-seen'].forEach(id => {
+  ['s-listings', 's-snaps', 's-queue', 's-seen', 'kpi-pages'].forEach(id => {
     const el = $(id);
     if (el) el.textContent = '—';
   });
@@ -150,6 +150,12 @@ function wipeBoard() {
   if (dt) dt.textContent = '';
   const runs = $('runs');
   if (runs) runs.innerHTML = '';
+  const note = $('kpi-pages-note');
+  if (note) note.textContent = 'loading budget…';
+  const meter = $('kpi-meter');
+  if (meter) meter.style.width = '0%';
+  const market = $('market-body');
+  if (market) market.innerHTML = '';
   if (typeof state !== 'undefined') {
     state.rows = [];
     state.total = 0;
@@ -284,6 +290,7 @@ async function submitGate(ev) {
 function startBoard() {
   const board = [
     ['listings', loadListings], ['stats', loadStats], ['queue', loadQueue], ['usage', loadUsage],
+    ['market', loadMarket],
   ];
   board.forEach(([name, fn]) => {
     fn().then(hideBanner).catch((e) => showBanner(`${name} failed to load: ${e.message} (build ${BUILD})`));
@@ -358,6 +365,11 @@ function confirmDialog(title, body, okLabel = 'Confirm', danger = false) {
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = (v) => (v === null || v === undefined ? '—' : `$${Number(v).toFixed(2)}`);
 const num = (v) => (v === null || v === undefined ? '—' : Intl.NumberFormat().format(v));
+/* The crawler stores a shop name, not a shop URL; Etsy shop slugs are the name. */
+const shopLink = (r) => {
+  const url = r.shop_url || (r.shop_name ? `https://www.etsy.com/shop/${encodeURIComponent(String(r.shop_name).replace(/\s+/g, ''))}` : '');
+  return url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(r.shop_name || 'visit shop')} ↗</a>` : '—';
+};
 
 function ago(iso) {
   if (!iso) return '—';
@@ -476,7 +488,7 @@ function renderNextUp() {
   if (!live.length) { el.innerHTML = '<span class="muted">nothing scheduled</span>'; return; }
   el.innerHTML = live.slice().sort((a, b) => new Date(a.due_at) - new Date(b.due_at))
     .slice(0, 2)
-    .map((k) => `<span class="next-chip">${esc(k.keyword)} <b>${dueLabel(k)}</b></span>`)
+    .map((k) => `<span class="next-chip"><span>${esc(k.keyword)}</span><span class="sep">·</span><b>${dueLabel(k)}</b></span>`)
     .join('');
 }
 
@@ -504,6 +516,19 @@ function renderBudget() {
         + `${slicesLeft} wake-up${slicesLeft === 1 ? '' : 's'} still available today.</span>`;
   }
   $('demand-text').innerHTML = msg;
+
+  // The same numbers at the top of the page, where they are read first.
+  const kp = $('kpi-pages'), kn = $('kpi-pages-note'), km = $('kpi-meter');
+  if (kp) kp.textContent = `${used} / ${budget}`;
+  if (kn) {
+    kn.textContent = used >= budget
+      ? 'budget spent · resets at midnight UTC'
+      : `${slicesLeft} wake-up${slicesLeft === 1 ? '' : 's'} left today`;
+  }
+  if (km) {
+    km.style.width = pct + '%';
+    km.className = pct >= 100 ? 'full' : pct > 75 ? 'high' : '';
+  }
 }
 
 function renderExplainers() {
@@ -663,7 +688,7 @@ async function loadUsage() {
 /* ── listings ────────────────────────────────────────────────────────── */
 function buildQuery() {
   const p = new URLSearchParams();
-  p.set('select', 'etsy_id,title,url,shop_name,price_usd,prev_price,favorites,prev_favorites,fav_gain,reviews,rating,shop_reviews,shop_rating,listing_date,image_count,availability,shipping_origin,is_ad,image_url,category_path,starred,obs_count,last_seen,first_seen,first_keyword');
+  p.set('select', 'etsy_id,title,url,shop_name,shop_url,price_usd,prev_price,original_price_usd,discount_pct,favorites,prev_favorites,fav_gain,reviews,rating,shop_reviews,shop_rating,listing_date,image_count,availability,quantity,shipping_origin,is_ad,image_url,category_path,starred,obs_count,last_seen,first_seen,first_keyword');
   p.set('order', SORTS[state.sort] || SORTS.favorites);
   p.set('limit', state.limit);
   p.set('offset', state.offset);
@@ -688,35 +713,39 @@ function listingAge(iso) {
 }
 
 function card(r) {
-  const delta = r.fav_gain == null ? '' : r.fav_gain > 0
+  const gain = r.fav_gain == null ? '' : r.fav_gain > 0
     ? `<span class="delta up">+${num(r.fav_gain)}</span>`
     : r.fav_gain < 0 ? `<span class="delta down">${num(r.fav_gain)}</span>` : '';
-  const priceDelta = r.prev_price != null && r.price_usd != null && Number(r.prev_price) !== Number(r.price_usd)
+  const was = r.prev_price != null && r.price_usd != null && Number(r.prev_price) !== Number(r.price_usd)
     ? `<span class="delta ${Number(r.price_usd) < Number(r.prev_price) ? 'down' : 'up'}">was ${money(r.prev_price)}</span>` : '';
+  const age = r.listing_date ? listingAge(r.listing_date).replace(/^listed /, '') : '—';
   const tags = [
-    r.obs_count > 1 ? `<span class="tag">${r.obs_count} looks</span>` : '<span class="tag">new</span>',
-    r.is_ad ? '<span class="tag ad">Ad</span>' : '',
     r.reviews ? `<span class="tag">${num(r.reviews)} reviews</span>` : '',
     r.rating ? `<span class="tag">★ ${r.rating}</span>` : '',
+    r.discount_pct ? `<span class="tag">−${Math.round(Number(r.discount_pct))}% off</span>` : '',
     r.shop_reviews ? `<span class="tag quiet">shop ${num(r.shop_reviews)}</span>` : '',
-    r.listing_date ? `<span class="tag quiet">${listingAge(r.listing_date)}</span>` : '',
-    r.first_keyword ? `<span class="tag">${esc(r.first_keyword)}</span>` : '',
+    r.obs_count > 1 ? `<span class="tag quiet">${r.obs_count} readings</span>` : '<span class="tag quiet">first reading</span>',
+    r.first_keyword ? `<span class="tag quiet">${esc(r.first_keyword)}</span>` : '',
   ].join('');
   return `<article class="card" data-id="${esc(r.etsy_id)}">
     <div class="thumb" data-act="open">
       ${r.image_url ? `<img loading="lazy" src="${esc(r.image_url)}" alt="" onerror="this.style.display='none'">` : ''}
-      <button class="star" data-act="star" data-on="${r.starred}" title="Shortlist">★</button>
+      ${r.is_ad ? '<span class="badge-ad">Ad</span>' : ''}
+      <button class="star" data-act="star" data-on="${r.starred}" title="Shortlist" aria-label="Shortlist this listing">★</button>
     </div>
     <div class="body">
-      <h3>${esc(r.title || '(untitled)')}</h3>
-      <div class="shop">${esc(r.shop_name || '')}</div>
-      <div class="row"><span class="price">${money(r.price_usd)}</span>${priceDelta}</div>
-      <div class="row"><span class="delta">♥ ${num(r.favorites)}</span>${delta}<span class="delta" style="margin-left:auto">${ago(r.last_seen)}</span></div>
+      <div class="shop">${esc(r.shop_name || 'unknown shop')}</div>
+      <h3>${esc(r.title || '(untitled listing)')}</h3>
+      <div class="metrics">
+        <div><b>${money(r.price_usd)}</b>${was}<span>price</span></div>
+        <div><b>${num(r.favorites)}</b>${gain}<span>favourites</span></div>
+        <div><b>${age}</b><span>listed</span></div>
+      </div>
       <div class="tags">${tags}</div>
     </div>
     <div class="actions">
-      <a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">Etsy ↗</a>
       <button data-act="open">Details</button>
+      <a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">Open on Etsy ↗</a>
     </div>
   </article>`;
 }
@@ -776,31 +805,50 @@ async function openDrawer(id) {
   $('drawer').classList.add('open');
   $('drawer').setAttribute('aria-hidden', 'false');
   document.body.style.overflow = 'hidden';
-  $('drawer-body').innerHTML = '<p style="color:var(--muted)">Loading…</p>';
+  $('drawer-body').innerHTML = '<p class="tiny" style="padding:24px 0">Loading…</p>';
+  const closeBtn = $('drawer-close');
+  if (closeBtn) setTimeout(() => closeBtn.focus(), 30);
   try {
     const { data } = await rest(`listings?etsy_id=eq.${encodeURIComponent(id)}&select=*`);
     const r = (data && data[0]) || null;
     if (!r) throw new Error('not found');
     const { data: hist } = await rest(`snapshots?etsy_id=eq.${encodeURIComponent(id)}&select=captured_at,favorites,price_usd&order=captured_at.desc&limit=40`);
     const pts = (hist || []).slice().reverse();
-    $('drawer-body').innerHTML = `
+        $('drawer-body').innerHTML = `
       ${r.image_url ? `<img class="hero" src="${esc(r.image_url)}" alt="">` : ''}
       <h2>${esc(r.title || '(untitled)')}</h2>
-      <div class="shop">${esc(r.shop_name || '')}</div>
+      <div class="shop">${esc(r.shop_name || 'unknown shop')}${r.is_ad ? ' · sponsored slot' : ''}</div>
+
+      <h4>The listing</h4>
       <dl class="kv">
         <dt>Price</dt><dd>${money(r.price_usd)}${r.prev_price != null && Number(r.prev_price) !== Number(r.price_usd) ? ` <span class="delta">was ${money(r.prev_price)}</span>` : ''}</dd>
         <dt>Favourites</dt><dd>${num(r.favorites)}${r.prev_favorites != null ? ` <span class="delta">was ${num(r.prev_favorites)}</span>` : ''}</dd>
-        <dt>Listing reviews</dt><dd>${num(r.reviews)}${r.rating ? ` · ★ ${r.rating}` : ''}</dd>
-        <dt>Shop</dt><dd>${r.shop_reviews ? `${num(r.shop_reviews)} reviews${r.shop_rating ? ` · ★ ${r.shop_rating}` : ''}` : '—'}</dd>
-        <dt>Listed</dt><dd>${r.listing_date || '—'}${r.listing_date ? ` · ${listingAge(r.listing_date)}` : ''}</dd>
-        <dt>Offer</dt><dd>${r.price_original_usd ? `was ${money(r.price_original_usd)}` : 'no discount shown'}${r.availability ? ` · ${esc(r.availability)}` : ''}${r.quantity ? ` · ${num(r.quantity)} in stock` : ''}${r.shipping_origin ? ` · ships from ${esc(r.shipping_origin)}` : ''}</dd>
-        <dt>Images</dt><dd>${r.image_count ? num(r.image_count) : '—'}${r.is_ad ? ' · sponsored slot' : ''}</dd>
+        <dt>Listed</dt><dd>${r.listing_date ? `${esc(r.listing_date)} · ${listingAge(r.listing_date)}` : '—'}</dd>
         <dt>Category</dt><dd>${esc(r.category_path || '—')}</dd>
-        <dt>First seen</dt><dd>${r.first_seen ? new Date(r.first_seen).toLocaleDateString() : '—'} · ${r.obs_count} observation${r.obs_count === 1 ? '' : 's'}</dd>
-        <dt>First keyword</dt><dd>${esc(r.first_keyword || '—')}</dd>
-        <dt>Observations</dt><dd>${pts.length ? sparkline(pts.map((p) => p.favorites)) : '—'}</dd>
+        <dt>First seen</dt><dd>${r.first_seen ? new Date(r.first_seen).toLocaleDateString() : '—'} · ${r.obs_count} reading${r.obs_count === 1 ? '' : 's'}</dd>
+        <dt>Found by</dt><dd>${esc(r.first_keyword || '—')}</dd>
       </dl>
-      <p><a class="btn sm" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">Open on Etsy ↗</a></p>
+
+      <h4>The offer</h4>
+      <dl class="kv">
+        <dt>List price</dt><dd>${r.original_price_usd ? `${money(r.original_price_usd)}${r.discount_pct ? ` · ${Number(r.discount_pct)}% off` : ''}` : 'no discount shown'}</dd>
+        <dt>Stock</dt><dd>${r.availability ? esc(r.availability) : '—'}${r.quantity ? ` · ${num(r.quantity)} available` : ''}</dd>
+        <dt>Ships from</dt><dd>${esc(r.shipping_origin || '—')}</dd>
+        <dt>Images</dt><dd>${r.image_count ? num(r.image_count) : '—'}</dd>
+      </dl>
+
+      <h4>The seller</h4>
+      <dl class="kv">
+        <dt>Listing reviews</dt><dd>${num(r.reviews)}${r.rating ? ` · ★ ${r.rating}` : ''}</dd>
+        <dt>Shop reviews</dt><dd>${r.shop_reviews ? `${num(r.shop_reviews)}${r.shop_rating ? ` · ★ ${r.shop_rating}` : ''}` : '—'}</dd>
+        <dt>Shop</dt><dd>${shopLink(r)}</dd>
+      </dl>
+
+      <h4>Favourite history</h4>
+      <p class="tiny">${pts.length} reading${pts.length === 1 ? '' : 's'}${pts.length ? ` · ${pts[0].captured_at ? new Date(pts[0].captured_at).toLocaleDateString() : ''} → today` : ''}</p>
+      <p style="margin:8px 0 0">${pts.length ? sparkline(pts.map((p) => p.favorites)) : '<span class="delta">not enough history yet</span>'}</p>
+
+      <p style="margin-top:22px"><a class="btn" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">Open on Etsy ↗</a></p>
       <div class="desc">${esc(r.description || 'No description captured.')}</div>`;
   } catch (err) {
     $('drawer-body').innerHTML = `<p style="color:var(--down)">${esc(err.message)}</p>`;
@@ -823,21 +871,84 @@ function closeDrawer() {
 }
 on('drawer-close', 'click', closeDrawer);
 on('scrim', 'click', closeDrawer);
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  closeDrawer();
+  [['acct', 'acct-scrim'], ['pw', 'pw-scrim']].forEach(([id, sc]) => {
+    const m = $(id);
+    if (m && !m.hidden) {
+      m.hidden = true;
+      const s2 = $(sc); if (s2) s2.hidden = true;
+      // focus must go back to the control that opened the dialog
+      const back = id === 'acct' ? $('acct-btn') : $('acct-pw');
+      if (back) back.focus();
+    }
+  });
+});
+
+/* ── market: one row per keyword, priced and scored ──────────────────────
+ * The decision this table supports: is there money here, and is the field
+ * weak enough to enter? It is the only composite view on the page, which is
+ * why the listings stay below it in plain, unfiltered form. */
+function shareBar(v) {
+  if (v === null || v === undefined) return '<span class="delta">—</span>';
+  const pct = Math.max(0, Math.min(100, Math.round(Number(v) * 100)));
+  // High is good when it means "field is weak" — pass the tone in, not a colour.
+  const tone = pct >= 60 ? ' high' : pct <= 25 ? ' low' : '';
+  return `<span class="share${tone}"><i><b style="width:${pct}%"></b></i><span class="pct">${pct}%</span></span>`;
+}
+
+const statusWord = (s) => (s === 'running' ? 'crawling'
+  : s === 'paused' ? 'paused' : s === 'blocked' ? 'parked' : s ? 'scheduled' : 'not scheduled');
+
+function marketRow(m) {
+  const d = m.d || {}, k = m.k || {};
+  return `<tr>
+    <td data-label="Keyword"><b>${esc(m.name)}</b>${k.status === 'paused' || k.status === 'blocked' ? ` <span class="tag quiet">${statusWord(k.status)}</span>` : ''}</td>
+    <td data-label="Listings seen">${d.listings != null ? num(d.listings) : '—'}</td>
+    <td data-label="Median price"><b>${money(d.median_price)}</b></td>
+    <td data-label="Top 10% favourites">${num(d.p90_fav)}</td>
+    <td data-label="Weak sellers">${shareBar(d.share_low_reviews)}</td>
+    <td data-label="Listed ≤ 90 days">${shareBar(d.share_listed_90d)}</td>
+    <td data-label="Next check">${dueLabel(k)}</td>
+  </tr>`;
+}
+
+async function loadMarket() {
+  const [daily, kws] = await Promise.all([
+    rest('keyword_daily?select=keyword,day,listings,median_price,p90_fav,share_low_reviews,share_listed_90d,shops&order=day.desc&limit=120'),
+    rest('keywords?select=keyword,depth,next_page,pass_no,status,pages_per_run,interval_hours,due_at,listings_seen,last_run_at&order=added_at.asc'),
+  ]);
+  const latest = {};
+  (daily.data || []).forEach((d) => { if (!latest[d.keyword]) latest[d.keyword] = d; });
+  const schedule = {};
+  (kws.data || []).forEach((k) => { schedule[k.keyword] = k; });
+  const rows = [...new Set([...Object.keys(schedule), ...Object.keys(latest)])]
+    .map((name) => ({ name, d: latest[name] || null, k: schedule[name] || null }))
+    .sort((a, b) => (b.d?.listings || 0) - (a.d?.listings || 0));
+  $('market-body').innerHTML = rows.map(marketRow).join('');
+  $('market-empty').hidden = rows.length > 0;
+}
 
 /* ── runs ────────────────────────────────────────────────────────────── */
 async function loadRuns() {
   try {
-    const { data } = await rest('runs?select=started_at,keyword,page_from,page_to,status,listings,challenges,egress_ip&order=started_at.desc&limit=10');
-    $('runs').innerHTML = (data || []).map((r) => `<tr>
-      <td>${r.started_at ? new Date(r.started_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</td>
-      <td>${esc(r.keyword || '—')}</td>
-      <td>${r.page_from ?? '—'}–${r.page_to ?? '—'}</td>
-      <td class="${r.status === 'succeeded' ? 'ok' : 'bad'}">${esc(r.status || '—')}</td>
-      <td>${num(r.listings)}</td>
-      <td>${num(r.challenges)}</td>
-      <td>${esc(r.egress_ip || '—')}</td>
-    </tr>`).join('') || '<tr><td colspan="7" style="color:var(--muted)">No runs yet.</td></tr>';
+    const { data } = await rest('runs?select=started_at,keyword,worker,page_from,page_to,status,listings,challenges,stopped_reason&order=started_at.desc&limit=12');
+    $('runs').innerHTML = (data || []).map((r) => {
+      const ok = r.status === 'succeeded';
+      const why = r.stopped_reason ? ` title="stopped: ${esc(r.stopped_reason)}"` : '';
+      const when = r.started_at
+        ? new Date(r.started_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+        : '—';
+      return `<tr>
+        <td>${when}</td>
+        <td><b>${esc(r.keyword || '—')}</b>${r.worker ? ` <span class="tag quiet">${esc(r.worker)}</span>` : ''}</td>
+        <td>${r.page_from ?? '—'}–${r.page_to ?? '—'}</td>
+        <td><span class="pill ${ok ? 'ok' : 'bad'}"${why}>${esc(r.status || '—')}</span></td>
+        <td>${num(r.listings)}</td>
+        <td>${num(r.challenges)}</td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="6" class="tiny">No runs yet.</td></tr>';
   } catch (e) { /* runs table is decoration; never break the page for it */ }
 }
 
@@ -916,7 +1027,12 @@ on('acct-btn', 'click', () => {
   const who = (SESSION && SESSION.email) || OWNER_EMAIL;
   const txt = $('acct-who');
   if (txt) txt.textContent = who;
-  if ($('acct')) { $('acct').hidden = false; $('acct-scrim').hidden = false; }
+  if ($('acct')) {
+    $('acct').hidden = false;
+    $('acct-scrim').hidden = false;
+    // a dialog nobody can reach with the keyboard is a dead end
+    setTimeout(() => { const b = $('acct-close'); if (b) b.focus(); }, 30);
+  }
 });
 
 on('acct-close', 'click', () => { if ($('acct')) { $('acct').hidden = true; $('acct-scrim').hidden = true; } });
