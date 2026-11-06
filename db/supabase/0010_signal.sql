@@ -6,6 +6,9 @@
 --   * "Listed on Nov 3, 2026"      div.wt-text-caption, stable across re-crawls
 --   * bestseller badge            div#bestseller clg-icon[name=bestseller]
 --   * star-seller badge           p.wt-text-title-01 == "Star Seller" (the help
+--                                 NOTE: div.clg-profile-avatar__badge-star-seller
+--                                 ships inside a <template> on EVERY listing page,
+--                                 star seller or not — it is a 100%-positive trap
 --                                 tooltip says "Star Sellers have an outstanding
 --                                 track record…" on EVERY page, which is why the
 --                                 old whole-page regex reported 44% star sellers)
