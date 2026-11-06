@@ -312,6 +312,7 @@ def extract_detail(html: str, soup, url: str) -> dict:
     out: dict = {
         "title": None, "price_usd": None, "price_original_usd": None,
         "price_min_usd": None, "price_max_usd": None, "is_on_sale": None,
+        "discount_pct": None,
         "is_range": None, "currency": None, "favorites": None,
         "listing_review_count": None, "listing_rating": None,
         "shop_review_count": None, "shop_rating": None, "shop_name": None,
@@ -498,6 +499,25 @@ def extract_detail(html: str, soup, url: str) -> dict:
                 if out["is_on_sale"] is None:
                     out["is_on_sale"] = bool(re.search(r"was price|original price|sale price",
                                                        block_text, re.I))
+
+        # The struck-through price is the only honest "was" price on the page:
+        #   <span class="wt-text-strikethrough lp_toffers_v2_original_price">$14.79+</span>
+        # Reading it (instead of guessing from a second number) turns "50% off"
+        # marketing into a measured discount against the list price.
+        if out["price_original_usd"] is None:
+            was = (price_block.select_one("span.wt-text-strikethrough")
+                   or price_block.select_one('[class*="original_price"]'))
+            if was:
+                m = re.search(r"(?:US\$|\$|€|£)\s?([\d.,]+)", was.get_text(" ", strip=True))
+                if m:
+                    out["price_original_usd"] = parse_money(m.group(1))
+        if out["price_original_usd"] and out["price_min_usd"]:
+            try:
+                cut = 1 - (float(out["price_min_usd"]) / float(out["price_original_usd"]))
+                if 0.005 < cut < 0.95:
+                    out["discount_pct"] = round(cut * 100, 1)
+            except (TypeError, ValueError):
+                pass
     if out["currency"] and out["currency"] != "USD":
         ex["warnings"].append(f"currency_not_usd:{out['currency']}")
     if out["favorites"] is None:
@@ -1028,6 +1048,7 @@ class Crawl:
                 "title": detail["title"] or card["title"],
                 "price_usd": detail["price_usd"],
                 "price_original_usd": detail["price_original_usd"],
+                "discount_pct": detail["discount_pct"],
                 "price_min_usd": detail["price_min_usd"],
                 "price_max_usd": detail["price_max_usd"],
                 "is_on_sale": detail["is_on_sale"],
