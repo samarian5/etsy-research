@@ -18,35 +18,170 @@
   addEventListener('unhandledrejection', (e) => window.__errs.push(`promise: ${(e.reason && e.reason.message) || e.reason}`));
 </script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Etsy research</title>
-<meta name="description" content="Keyword research board for Etsy — listings, momentum and a crawl queue you control.">
+<title>Etsy research — a private board for picking niches</title>
+<meta name="description" content="What Etsy sells for each keyword: prices, favourite counts, seller strength and how the search results move over time.">
+<meta name="color-scheme" content="light dark">
 <link rel="stylesheet" href="./styles.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛍️</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%23b4552d'/><text x='50' y='68' font-family='system-ui' font-size='54' font-weight='600' text-anchor='middle' fill='%23fff'>E</text></svg>">
 </head>
 <body data-auth="pending">
+<a class="skip" href="#browse">Skip to the listings</a>
 <div id="boot-splash">Checking your session…</div>
 
 <div id="banner" class="banner" hidden></div>
-  <header class="topbar">
-  <div class="brand"><b>Etsy research</b><span id="board-name">board</span></div>
-  <div class="spacer"></div>
-  <div class="stat stat-listings"><b id="s-listings">—</b><span>listings</span></div>
-  <div class="stat stat-snaps"><b id="s-snaps">—</b><span>observations</span></div>
-  <div class="stat stat-queue"><b id="s-queue">—</b><span>keywords</span></div>
-  <div class="stat stat-seen"><b><span class="dot" id="s-dot"></span><span id="s-seen">—</span></b><span>last crawl</span></div>
-  <button class="btn ghost sm" id="acct-btn" title="account">account</button>
+
+<header class="appbar">
+  <div class="shell appbar-in">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">ER</span>
+      <span class="brand-text">
+        <b>Etsy research</b>
+        <span>private board</span>
+      </span>
+    </div>
+    <div class="appbar-right">
+      <span class="crawl-state" title="When the crawler last wrote a listing">
+        <span class="dot" id="s-dot"></span>
+        <span id="s-seen">—</span>
+      </span>
+      <button class="btn ghost sm" id="acct-btn" title="account">account</button>
+    </div>
+  </div>
 </header>
 
-<main class="wrap">
+<main class="shell">
 
-  <!-- ── scan schedule ──────────────────────────────────────────────── -->
-  <section class="panel">
-    <div class="panel-head">
+  <!-- ── at a glance ───────────────────────────────────────────────────── -->
+  <section class="kpis" aria-label="What the board holds">
+    <div class="kpi">
+      <span class="kpi-label">Listings</span>
+      <b id="s-listings">—</b>
+      <span class="kpi-note">unique products, de-duplicated by Etsy id</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-label">Readings</span>
+      <b id="s-snaps">—</b>
+      <span class="kpi-note">price and favourite readings over time</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-label">Keywords</span>
+      <b id="s-queue">—</b>
+      <span class="kpi-note">on the crawl schedule</span>
+    </div>
+    <div class="kpi kpi-budget">
+      <span class="kpi-label">Search pages today</span>
+      <b id="kpi-pages">—</b>
+      <span class="kpi-note" id="kpi-pages-note">loading budget…</span>
+      <div class="meter"><i id="kpi-meter"></i></div>
+    </div>
+  </section>
+
+  <!-- ── market ────────────────────────────────────────────────────────── -->
+  <section class="card-block" id="market" aria-labelledby="market-title">
+    <div class="block-head">
       <div>
-        <h2>Scan schedule</h2>
-        <p class="sub">Every keyword has its own timer. The runner wakes up once an hour and crawls only what is due.</p>
+        <h2 id="market-title">Market</h2>
+        <div class="title-row"><h3>What each keyword is actually worth</h3></div>
+        <p class="block-sub">
+          One row per keyword, from its most recent crawl. Read left to right:
+          <b>the going price</b>, then <b>how much demand the winners have</b>, then
+          <b>how weak the field is</b> — a high price with weak sellers is the opening.
+        </p>
       </div>
-      <div class="now" id="next-up">—</div>
+    </div>
+
+    <div class="table-wrap">
+      <table class="data market-table">
+        <thead>
+          <tr>
+            <th scope="col">Keyword</th>
+            <th scope="col">Listings in crawl</th>
+            <th scope="col">Median price</th>
+            <th scope="col">Top 10% favourites</th>
+            <th scope="col">Weak sellers</th>
+            <th scope="col">Listed ≤ 90 days</th>
+            <th scope="col">Next check</th>
+          </tr>
+        </thead>
+        <tbody id="market-body"></tbody>
+      </table>
+    </div>
+    <p class="empty-inline" id="market-empty" hidden>
+      Nothing measured yet. Add a keyword below and the next crawl fills this table in.
+    </p>
+
+    <p class="note">
+      <b>Listings in crawl</b> is the size of that keyword's most recent sample, not its whole
+      market. The two shares are measured over the same sample — “listed ≤ 90 days” only counts
+      crawls from 6 November 2026 onward, so older rows show a dash rather than a guess.
+    </p>
+
+    <dl class="legend">
+      <div>
+        <dt>Top 10% favourites</dt>
+        <dd>The favourite count that puts a listing in the best tenth of results — the bar a new listing has to clear.</dd>
+      </div>
+      <div>
+        <dt>Weak sellers</dt>
+        <dd>Share of results with fewer than 50 reviews. High means the field is soft and a new shop can rank.</dd>
+      </div>
+      <div>
+        <dt>Listed ≤ 90 days</dt>
+        <dd>Share of listings created in the last three months. High means Etsy is still letting newcomers in.</dd>
+      </div>
+    </dl>
+  </section>
+
+  <!-- ── listings ──────────────────────────────────────────────────────── -->
+  <section class="card-block" id="browse" aria-labelledby="browse-title">
+    <div class="block-head">
+      <div>
+        <h2 id="browse-title">Listings</h2>
+        <div class="title-row"><h3>Every product the crawler has captured</h3></div>
+      </div>
+      <div class="toolbar">
+        <label class="search-wrap" aria-label="Search listings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m16.5 16.5 4 4"></path></svg>
+          <input type="text" id="q" placeholder="Search title, shop or description">
+        </label>
+        <div class="seg" id="seg" role="group" aria-label="Filter listings">
+          <button data-status="all" aria-pressed="true">All</button>
+          <button data-status="rising" aria-pressed="false">Rising</button>
+          <button data-status="new" aria-pressed="false">New</button>
+          <button data-status="starred" aria-pressed="false">Shortlisted</button>
+          <button data-status="organic" aria-pressed="false">No ads</button>
+        </div>
+        <div class="field">
+          <select id="sort" aria-label="Sort listings">
+            <option value="favorites">Most favourites</option>
+            <option value="momentum">Biggest gain since last crawl</option>
+            <option value="newest">Newest first seen</option>
+            <option value="price_asc">Price, low to high</option>
+            <option value="price_desc">Price, high to low</option>
+            <option value="reviews">Most reviewed</option>
+          </select>
+        </div>
+        <div class="count" id="count"></div>
+      </div>
+    </div>
+
+    <div class="grid" id="grid"></div>
+    <div class="more" id="more-wrap" hidden><button class="btn ghost" id="more">Show more</button></div>
+    <div class="empty" id="empty" hidden>Nothing matches yet. Add a keyword below — the crawler picks it up within the hour.</div>
+  </section>
+
+  <!-- ── crawler ───────────────────────────────────────────────────────── -->
+  <section class="card-block block-secondary" id="crawler" aria-labelledby="crawler-title">
+    <div class="block-head">
+      <div>
+        <h2 id="crawler-title">Crawler</h2>
+        <div class="title-row"><h3>What gets crawled, and when</h3></div>
+        <p class="block-sub">
+          Each keyword has its own timer and its own place in the search results.
+          One wake-up always fetches two search pages, then visits every new listing on them.
+        </p>
+      </div>
+      <div class="now" id="next-up"></div>
     </div>
 
     <form class="queue-form" id="kw-form" autocomplete="off">
@@ -69,7 +204,7 @@
       <b id="bulk-count">0 selected</b>
       <span class="bulk-label">check every</span>
       <select id="bulk-interval" aria-label="Interval for selected keywords"></select>
-      <button class="btn sm" id="bulk-apply" type="button">Apply to selected</button>
+      <button class="btn sm" id="bulk-apply" type="button">Apply</button>
       <button class="btn ghost sm" id="bulk-clear" type="button">Clear</button>
     </div>
 
@@ -89,7 +224,7 @@
         </thead>
         <tbody id="queue-body"></tbody>
       </table>
-      <p class="queue-empty" id="queue-empty" hidden>No keywords yet. Add one above and the runner will pick it up within the hour.</p>
+      <p class="queue-empty" id="queue-empty" hidden>No keywords yet. Add one above and the runner picks it up within the hour.</p>
     </div>
 
     <div class="explainers">
@@ -105,7 +240,7 @@
 
     <div class="budget">
       <div class="budget-head">
-        <b>Today’s crawl budget</b>
+        <b>Today's crawl budget</b>
         <span id="budget-text">—</span>
       </div>
       <div class="meter"><i id="budget-bar"></i></div>
@@ -120,53 +255,18 @@
     </div>
   </section>
 
-  <!-- ── filters ───────────────────────────────────────────────────── -->
-  <section class="panel">
-    <div class="filters">
-      <div class="field">
-        <label for="q">Search</label>
-        <input type="text" id="q" placeholder="title, shop or description">
-      </div>
-      <div class="field">
-        <label>Status</label>
-        <div class="seg" id="seg">
-          <button data-status="all" aria-pressed="true">All</button>
-          <button data-status="rising" aria-pressed="false">Rising</button>
-          <button data-status="new" aria-pressed="false">New</button>
-          <button data-status="starred" aria-pressed="false">Starred</button>
-          <button data-status="organic" aria-pressed="false">No ads</button>
-        </div>
-      </div>
-      <div class="field">
-        <label for="sort">Sort</label>
-        <select id="sort">
-          <option value="favorites">Favourites</option>
-          <option value="momentum">Momentum (Δ fav)</option>
-          <option value="newest">Newest first seen</option>
-          <option value="price_asc">Price ↑</option>
-          <option value="price_desc">Price ↓</option>
-          <option value="reviews">Reviews</option>
-        </select>
-      </div>
-      <div class="count" id="count"></div>
-    </div>
-  </section>
-
-  <div class="grid" id="grid"></div>
-  <div class="more" id="more-wrap" hidden><button class="btn ghost" id="more">Show more</button></div>
-  <div class="empty" id="empty" hidden>No listings match yet. Add a keyword above — the next tick picks it up within the hour.</div>
-
-  <!-- ── runs ──────────────────────────────────────────────────────── -->
-  <section class="panel" style="margin-top:26px">
-    <div class="panel-head">
+  <!-- ── runs ──────────────────────────────────────────────────────────── -->
+  <section class="card-block" id="runs-block" aria-labelledby="runs-title">
+    <div class="block-head">
       <div>
-        <h2>Recent slices</h2>
-        <p class="sub">Each row is one wake-up: two search pages, the listings found, and whether Etsy let us through.</p>
+        <h2 id="runs-title">Recent slices</h2>
+        <div class="title-row"><h3>Every wake-up, and whether Etsy let it through</h3></div>
+        <p class="block-sub">A slice is two search pages plus the listings on them. Challenges are the slider puzzles Etsy served.</p>
       </div>
     </div>
     <div class="table-wrap">
       <table class="runs">
-        <thead><tr><th>Started</th><th>Keyword</th><th>Pages</th><th>Result</th><th>Listings</th><th>CAPTCHAs</th></tr></thead>
+        <thead><tr><th>Started</th><th>Keyword</th><th>Pages</th><th>Result</th><th>Listings</th><th>Challenges</th></tr></thead>
         <tbody id="runs"></tbody>
       </table>
     </div>
@@ -174,7 +274,7 @@
 </main>
 
 <div class="scrim" id="scrim"></div>
-<aside class="drawer" id="drawer" aria-hidden="true">
+<aside class="drawer" id="drawer" aria-hidden="true" aria-label="Listing details">
   <button class="close" id="drawer-close" aria-label="Close">✕</button>
   <div id="drawer-body"></div>
 </aside>
@@ -189,12 +289,12 @@
   </div>
 </div>
 
-<!-- ── sign-in gate ──────────────────────────────────────────────────── -->
+<!-- ── sign-in gate ────────────────────────────────────────────────────── -->
 <section class="gate" id="gate" hidden>
   <form class="gate-card" id="gate-form" onsubmit="return window.__gateReady ? true : window.__gateStale()">
-    <div class="gate-mark">🛍️</div>
+    <div class="gate-mark" aria-hidden="true">ER</div>
     <h1>Etsy research</h1>
-    <p class="gate-sub">Private board. Sign in with the owner email and password — no email links needed.</p>
+    <p class="gate-sub">A private board for one researcher. Sign in with the owner email and password — no email links needed.</p>
     <label for="gate-email">Email</label>
     <input type="email" id="gate-email" value="pityailon@gmail.com" autocomplete="username" spellcheck="false" required>
     <label for="gate-pw">Password</label>
@@ -212,7 +312,7 @@
   </form>
 </section>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <div class="scrim2" id="acct-scrim" hidden></div>
 <div class="modal small" id="acct" hidden role="dialog" aria-modal="true" aria-labelledby="acct-title">
@@ -238,6 +338,7 @@
     <button class="btn" id="pw-save" type="button">Save password</button>
   </div>
 </div>
+
 <script>
   // "I click Sign in and nothing happens" means app.js never ran: GitHub Pages
   // caches HTML for 10 minutes, so a stale index.html can point at a stale (or
