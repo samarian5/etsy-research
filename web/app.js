@@ -663,7 +663,7 @@ async function loadUsage() {
 /* ── listings ────────────────────────────────────────────────────────── */
 function buildQuery() {
   const p = new URLSearchParams();
-  p.set('select', 'etsy_id,title,url,shop_name,price_usd,prev_price,favorites,prev_favorites,fav_gain,reviews,rating,image_url,category_path,starred,obs_count,last_seen,first_seen,first_keyword');
+  p.set('select', 'etsy_id,title,url,shop_name,price_usd,prev_price,favorites,prev_favorites,fav_gain,reviews,rating,shop_reviews,shop_rating,listing_date,image_count,availability,shipping_origin,is_ad,image_url,category_path,starred,obs_count,last_seen,first_seen,first_keyword');
   p.set('order', SORTS[state.sort] || SORTS.favorites);
   p.set('limit', state.limit);
   p.set('offset', state.offset);
@@ -672,7 +672,19 @@ function buildQuery() {
   if (state.status === 'rising') p.set('fav_gain', 'gt.0');
   if (state.status === 'new') p.set('obs_count', 'eq.1');
   if (state.status === 'starred') p.set('starred', 'is.true');
+  // "No ads": sponsored cards are interleaved with organic ones, so a rank read
+  // off an unfiltered list is partly a read of Etsy's ad auction.
+  if (state.status === 'organic') p.set('is_ad', 'not.is.true');
   return p.toString();
+}
+
+function listingAge(iso) {
+  if (!iso) return '';
+  const days = Math.round((Date.now() - new Date(iso + 'T00:00:00Z').getTime()) / 86400000);
+  if (!isFinite(days) || days < 0) return '';
+  if (days < 31) return days <= 1 ? 'listed today' : `listed ${days}d`;
+  if (days < 365) return `listed ${Math.round(days / 30)}mo`;
+  return `listed ${(days / 365).toFixed(1)}y`;
 }
 
 function card(r) {
@@ -683,8 +695,11 @@ function card(r) {
     ? `<span class="delta ${Number(r.price_usd) < Number(r.prev_price) ? 'down' : 'up'}">was ${money(r.prev_price)}</span>` : '';
   const tags = [
     r.obs_count > 1 ? `<span class="tag">${r.obs_count} looks</span>` : '<span class="tag">new</span>',
+    r.is_ad ? '<span class="tag ad">Ad</span>' : '',
     r.reviews ? `<span class="tag">${num(r.reviews)} reviews</span>` : '',
     r.rating ? `<span class="tag">★ ${r.rating}</span>` : '',
+    r.shop_reviews ? `<span class="tag quiet">shop ${num(r.shop_reviews)}</span>` : '',
+    r.listing_date ? `<span class="tag quiet">${listingAge(r.listing_date)}</span>` : '',
     r.first_keyword ? `<span class="tag">${esc(r.first_keyword)}</span>` : '',
   ].join('');
   return `<article class="card" data-id="${esc(r.etsy_id)}">
@@ -775,7 +790,11 @@ async function openDrawer(id) {
       <dl class="kv">
         <dt>Price</dt><dd>${money(r.price_usd)}${r.prev_price != null && Number(r.prev_price) !== Number(r.price_usd) ? ` <span class="delta">was ${money(r.prev_price)}</span>` : ''}</dd>
         <dt>Favourites</dt><dd>${num(r.favorites)}${r.prev_favorites != null ? ` <span class="delta">was ${num(r.prev_favorites)}</span>` : ''}</dd>
-        <dt>Reviews</dt><dd>${num(r.reviews)}${r.rating ? ` · ★ ${r.rating}` : ''}</dd>
+        <dt>Listing reviews</dt><dd>${num(r.reviews)}${r.rating ? ` · ★ ${r.rating}` : ''}</dd>
+        <dt>Shop</dt><dd>${r.shop_reviews ? `${num(r.shop_reviews)} reviews${r.shop_rating ? ` · ★ ${r.shop_rating}` : ''}` : '—'}</dd>
+        <dt>Listed</dt><dd>${r.listing_date || '—'}${r.listing_date ? ` · ${listingAge(r.listing_date)}` : ''}</dd>
+        <dt>Offer</dt><dd>${r.price_original_usd ? `was ${money(r.price_original_usd)}` : 'no discount shown'}${r.availability ? ` · ${esc(r.availability)}` : ''}${r.quantity ? ` · ${num(r.quantity)} in stock` : ''}${r.shipping_origin ? ` · ships from ${esc(r.shipping_origin)}` : ''}</dd>
+        <dt>Images</dt><dd>${r.image_count ? num(r.image_count) : '—'}${r.is_ad ? ' · sponsored slot' : ''}</dd>
         <dt>Category</dt><dd>${esc(r.category_path || '—')}</dd>
         <dt>First seen</dt><dd>${r.first_seen ? new Date(r.first_seen).toLocaleDateString() : '—'} · ${r.obs_count} observation${r.obs_count === 1 ? '' : 's'}</dd>
         <dt>First keyword</dt><dd>${esc(r.first_keyword || '—')}</dd>
