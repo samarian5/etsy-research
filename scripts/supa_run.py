@@ -141,6 +141,16 @@ def main() -> int:
         supa.finish_slice(kw, pf)
         return 1
 
+    # Related-search chips Etsy printed alongside the results: free keyword research,
+    # collected on a page we already downloaded.
+    related = meta.get("related") or []
+    if related:
+        try:
+            n = supa.note_candidates(related)
+            log(f"[keywords] stored {n} related-search suggestions")
+        except Exception as e:                              # noqa: BLE001
+            log(f"[keywords] candidate store failed: {type(e).__name__}: {e}")
+
     status = meta.get("status") or ("failed" if rc else "succeeded")
     stopped = meta.get("stopped_reason")
     blocked = status != "succeeded"
