@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="build" content="3cb850e2">
+<script>
+  // Record failures before app.js runs: without this a thrown boot() looks
+  // exactly like "signed in but the board never appeared".
+  window.__errs = [];
+  addEventListener('error', (e) => window.__errs.push(`${e.message} @ ${e.filename}:${e.lineno}`));
+  // boot failsafe: if app.js never resolves the session, show the gate anyway
+  setTimeout(() => {
+    if (document.body.dataset.auth !== 'pending') return;
+    document.body.dataset.auth = 'out';
+    var g = document.getElementById('gate');
+    if (g) g.hidden = false;   // [hidden] now really hides, so clear it
+  }, 7000);
+  addEventListener('unhandledrejection', (e) => window.__errs.push(`promise: ${(e.reason && e.reason.message) || e.reason}`));
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Etsy research — a private board for picking niches</title>
+<meta name="description" content="What Etsy sells for each keyword: prices, favourite counts, seller strength and how the search results move over time.">
+<meta name="color-scheme" content="light dark">
+<link rel="stylesheet" href="./styles.css?v=f08a463a">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%23b4552d'/><text x='50' y='68' font-family='system-ui' font-size='54' font-weight='600' text-anchor='middle' fill='%23fff'>E</text></svg>">
+</head>
+<body data-auth="pending">
+<a class="skip" href="#browse">Skip to the listings</a>
+<div id="boot-splash">Checking your session…</div>
+
+<div id="banner" class="banner" hidden></div>
+
+<header class="appbar">
+  <div class="shell appbar-in">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">ER</span>
+      <span class="brand-text">
+        <b>Etsy research</b>
+        <span>private board</span>
+      </span>
+    </div>
+    <div class="appbar-right">
+      <span class="crawl-state" title="When the crawler last wrote a listing">
+        <span class="dot" id="s-dot"></span>
+        <span id="s-seen">—</span>
+      </span>
+      <button class="btn ghost sm" id="acct-btn" title="account">account</button>
+    </div>
+  </div>
+</header>
+
+<main class="shell">
+
+  <!-- ── at a glance ───────────────────────────────────────────────────── -->
+  <section class="kpis" aria-label="What the board holds">
+    <div class="kpi">
+      <span class="kpi-label">Listings</span>
+      <b id="s-listings">—</b>
+      <span class="kpi-note">unique products, de-duplicated by Etsy id</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-label">Readings</span>
+      <b id="s-snaps">—</b>
+      <span class="kpi-note">price and favourite readings over time</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-label">Keywords</span>
+      <b id="s-queue">—</b>
+      <span class="kpi-note">on the crawl schedule</span>
+    </div>
+    <div class="kpi kpi-budget">
+      <span class="kpi-label">Search pages today</span>
+      <b id="kpi-pages">—</b>
+      <span class="kpi-note" id="kpi-pages-note">loading budget…</span>
+      <div class="meter"><i id="kpi-meter"></i></div>
+    </div>
+  </section>
+
+  <!-- ── market ────────────────────────────────────────────────────────── -->
+  <section class="card-block" id="market" aria-labelledby="market-title">
+    <div class="block-head">
+      <div>
+        <h2 id="market-title">Market</h2>
+        <div class="title-row"><h3>What each keyword is actually worth</h3></div>
+        <p class="block-sub">
+          One row per keyword, from its most recent crawl. Read left to right:
+          <b>the going price</b>, then <b>how much demand the winners have</b>, then
+          <b>how weak the field is</b> — a high price with weak sellers is the opening.
+        </p>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table class="data market-table">
+        <thead>
+          <tr>
+            <th scope="col">Keyword</th>
+            <th scope="col">Listings in crawl</th>
+            <th scope="col">Median price</th>
+            <th scope="col">Top 10% favourites</th>
+            <th scope="col">Weak sellers</th>
+            <th scope="col">Listed ≤ 90 days</th>
+            <th scope="col">Next check</th>
+          </tr>
+        </thead>
+        <tbody id="market-body"></tbody>
+      </table>
+    </div>
+    <p class="empty-inline" id="market-empty" hidden>
+      Nothing measured yet. Add a keyword below and the next crawl fills this table in.
+    </p>
+
+    <p class="note">
+      <b>Listings in crawl</b> is the size of that keyword's most recent sample, not its whole
+      market. The two shares are measured over the same sample — “listed ≤ 90 days” only counts
+      crawls from 6 November 2026 onward, so older rows show a dash rather than a guess.
+    </p>
+
+    <dl class="legend">
+      <div>
+        <dt>Top 10% favourites</dt>
+        <dd>The favourite count that puts a listing in the best tenth of results — the bar a new listing has to clear.</dd>
+      </div>
+      <div>
+        <dt>Weak sellers</dt>
+        <dd>Share of results with fewer than 50 reviews. High means the field is soft and a new shop can rank.</dd>
+      </div>
+      <div>
+        <dt>Listed ≤ 90 days</dt>
+        <dd>Share of listings created in the last three months. High means Etsy is still letting newcomers in.</dd>
+      </div>
+    </dl>
+  </section>
+
+  <!-- ── listings ──────────────────────────────────────────────────────── -->
+  <section class="card-block" id="browse" aria-labelledby="browse-title">
+    <div class="block-head">
+      <div>
+        <h2 id="browse-title">Listings</h2>
+        <div class="title-row"><h3>Every product the crawler has captured</h3></div>
+      </div>
+      <div class="toolbar">
+        <label class="search-wrap" aria-label="Search listings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m16.5 16.5 4 4"></path></svg>
+          <input type="text" id="q" placeholder="Search title, shop or description">
+        </label>
+        <div class="seg" id="seg" role="group" aria-label="Filter listings">
+          <button data-status="all" aria-pressed="true">All</button>
+          <button data-status="rising" aria-pressed="false">Rising</button>
+          <button data-status="new" aria-pressed="false">New</button>
+          <button data-status="starred" aria-pressed="false">Shortlisted</button>
+          <button data-status="organic" aria-pressed="false">No ads</button>
+        </div>
+        <div class="field">
+          <select id="sort" aria-label="Sort listings">
+            <option value="favorites">Most favourites</option>
+            <option value="momentum">Biggest gain since last crawl</option>
+            <option value="newest">Newest first seen</option>
+            <option value="price_asc">Price, low to high</option>
+            <option value="price_desc">Price, high to low</option>
+            <option value="reviews">Most reviewed</option>
+          </select>
+        </div>
+        <div class="count" id="count"></div>
+      </div>
+    </div>
+
+    <div class="grid" id="grid"></div>
+    <div class="more" id="more-wrap" hidden><button class="btn ghost" id="more">Show more</button></div>
+    <div class="empty" id="empty" hidden>Nothing matches yet. Add a keyword below — the crawler picks it up within the hour.</div>
+  </section>
+
+  <!-- ── crawler ───────────────────────────────────────────────────────── -->
+  <section class="card-block block-secondary" id="crawler" aria-labelledby="crawler-title">
+    <div class="block-head">
+      <div>
+        <h2 id="crawler-title">Crawler</h2>
+        <div class="title-row"><h3>What gets crawled, and when</h3></div>
+        <p class="block-sub">
+          Each keyword has its own timer and its own place in the search results.
+          One wake-up always fetches two search pages, then visits every new listing on them.
+        </p>
+      </div>
+      <div class="now" id="next-up"></div>
+    </div>
+
+    <form class="queue-form" id="kw-form" autocomplete="off">
+      <div class="field grow">
+        <label for="kw">Add a keyword</label>
+        <input type="text" id="kw" placeholder="e.g. personalised wedding gift" required minlength="2" maxlength="80">
+      </div>
+      <div class="field">
+        <label for="kw-depth">Page depth <button type="button" class="help" data-help="depth" aria-label="What is page depth?">?</button></label>
+        <input type="number" id="kw-depth" value="20" min="1" max="100">
+      </div>
+      <div class="field">
+        <label for="kw-interval">Check every</label>
+        <select id="kw-interval"></select>
+      </div>
+      <button class="btn" type="submit">Add to queue</button>
+    </form>
+
+    <div class="bulk" id="bulk" hidden>
+      <b id="bulk-count">0 selected</b>
+      <span class="bulk-label">check every</span>
+      <select id="bulk-interval" aria-label="Interval for selected keywords"></select>
+      <button class="btn sm" id="bulk-apply" type="button">Apply</button>
+      <button class="btn ghost sm" id="bulk-clear" type="button">Clear</button>
+    </div>
+
+    <div class="table-wrap">
+      <table class="queue">
+        <thead>
+          <tr>
+            <th class="chk"><input type="checkbox" id="check-all" aria-label="Select all keywords"></th>
+            <th>Keyword</th>
+            <th>Check every</th>
+            <th>Depth</th>
+            <th>Lap progress</th>
+            <th>Next check</th>
+            <th>Last run</th>
+            <th class="acts"></th>
+          </tr>
+        </thead>
+        <tbody id="queue-body"></tbody>
+      </table>
+      <p class="queue-empty" id="queue-empty" hidden>No keywords yet. Add one above and the runner picks it up within the hour.</p>
+    </div>
+
+    <div class="explainers">
+      <details class="explain" id="explain-depth">
+        <summary>What is “page depth”?</summary>
+        <div class="explain-body" id="depth-explain"></div>
+      </details>
+      <details class="explain" id="explain-interval">
+        <summary>What does “check every” change?</summary>
+        <div class="explain-body" id="interval-explain"></div>
+      </details>
+    </div>
+
+    <div class="budget">
+      <div class="budget-head">
+        <b>Today's crawl budget</b>
+        <span id="budget-text">—</span>
+      </div>
+      <div class="meter"><i id="budget-bar"></i></div>
+      <div class="budget-foot">
+        <span id="demand-text"></span>
+        <span class="budget-set">
+          <label for="budget-input">pages/day</label>
+          <input type="number" id="budget-input" min="6" max="200" step="2">
+          <button class="btn ghost sm" id="budget-save" type="button">Save</button>
+        </span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── runs ──────────────────────────────────────────────────────────── -->
+  <section class="card-block" id="runs-block" aria-labelledby="runs-title">
+    <div class="block-head">
+      <div>
+        <h2 id="runs-title">Recent slices</h2>
+        <div class="title-row"><h3>Every wake-up, and whether Etsy let it through</h3></div>
+        <p class="block-sub">A slice is two search pages plus the listings on them. Challenges are the slider puzzles Etsy served.</p>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="runs">
+        <thead><tr><th>Started</th><th>Keyword</th><th>Pages</th><th>Result</th><th>Listings</th><th>Challenges</th></tr></thead>
+        <tbody id="runs"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-hidden="true" aria-label="Listing details">
+  <button class="close" id="drawer-close" aria-label="Close">✕</button>
+  <div id="drawer-body"></div>
+</aside>
+
+<div class="scrim2" id="confirm-scrim" hidden></div>
+<div class="modal small" id="confirm" role="dialog" aria-modal="true" aria-labelledby="confirm-title" hidden>
+  <h3 id="confirm-title">Are you sure?</h3>
+  <p class="sub" id="confirm-body"></p>
+  <div class="modal-foot">
+    <button class="btn" id="confirm-ok" type="button">Confirm</button>
+    <button class="btn ghost" id="confirm-cancel" type="button">Cancel</button>
+  </div>
+</div>
+
+<!-- ── sign-in gate ────────────────────────────────────────────────────── -->
+<section class="gate" id="gate" hidden>
+  <form class="gate-card" id="gate-form" onsubmit="return window.__gateReady ? true : window.__gateStale()">
+    <div class="gate-mark" aria-hidden="true">ER</div>
+    <h1>Etsy research</h1>
+    <p class="gate-sub">A private board for one researcher. Sign in with the owner email and password — no email links needed.</p>
+    <label for="gate-email">Email</label>
+    <input type="email" id="gate-email" value="pityailon@gmail.com" autocomplete="username" spellcheck="false" required>
+    <label for="gate-pw">Password</label>
+    <input type="password" id="gate-pw" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="your password" required>
+    <button class="btn" id="gate-signin" type="submit">Sign in</button>
+    <p class="gate-msg" id="gate-msg" hidden></p>
+    <p class="gate-foot mono-note">build <span id="build-tag">not loaded</span></p>
+    <details class="gate-alt">
+      <summary>Forgot the password, or use a one-time code</summary>
+      <p>Type the code from a sign-in email, paste a sign-in link, or send yourself a fresh link.</p>
+      <input type="text" id="gate-paste" placeholder="8-digit code, or the whole link" spellcheck="false" autocomplete="off">
+      <button class="btn ghost" id="gate-verify" type="button">Sign in with this</button>
+      <button class="btn ghost" id="gate-send" type="button">Email me a link instead</button>
+    </details>
+  </form>
+</section>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<div class="scrim2" id="acct-scrim" hidden></div>
+<div class="modal small" id="acct" hidden role="dialog" aria-modal="true" aria-labelledby="acct-title">
+  <h2 id="acct-title">Account</h2>
+  <p class="mono-note">Signed in as <b id="acct-who">—</b></p>
+  <div class="modal-actions">
+    <button class="btn ghost" id="acct-close" type="button">Close</button>
+    <button class="btn ghost" id="acct-pw" type="button">Change password</button>
+    <button class="btn danger" id="acct-out" type="button">Sign out</button>
+  </div>
+</div>
+
+<div class="scrim2" id="pw-scrim" hidden></div>
+<div class="modal small" id="pw" hidden role="dialog" aria-modal="true" aria-labelledby="pw-title">
+  <h2 id="pw-title">Change password</h2>
+  <label for="pw-new">New password</label>
+  <input type="password" id="pw-new" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="at least 6 characters">
+  <label for="pw-new2">Repeat it</label>
+  <input type="password" id="pw-new2" autocomplete="new-password">
+  <p class="mono-note" id="pw-msg"></p>
+  <div class="modal-actions">
+    <button class="btn ghost" id="pw-cancel" type="button">Cancel</button>
+    <button class="btn" id="pw-save" type="button">Save password</button>
+  </div>
+</div>
+
+<script>
+  // "I click Sign in and nothing happens" means app.js never ran: GitHub Pages
+  // caches HTML for 10 minutes, so a stale index.html can point at a stale (or
+  // missing) app.js while the page still looks finished.
+  //   * the build id is fetched fresh every load and the scripts loaded with it,
+  //     so an old shell still executes the newest code;
+  //   * if the app never binds the form, pressing the button explains itself
+  //     instead of quietly reloading the page.
+  window.__gateStale = function () {
+    var m = document.getElementById('gate-msg');
+    if (m) {
+      m.hidden = false;
+      m.innerHTML = 'This page did not finish loading. <a href="./?v=' + Date.now() +
+        '">Reload the latest version</a> and try again.';
+    }
+    return false;
+  };
+
+  (function () {
+    function load(file, ver) {
+      return new Promise(function (resolve) {
+        var el = document.createElement('script');
+        el.src = './' + file + (ver ? '?v=' + ver : '');
+        el.onload = el.onerror = resolve;
+        document.body.appendChild(el);
+      });
+    }
+    function boot(ver) {
+      window.__BUILD = ver || '';
+      // same reason as the scripts: a content-hashed href defeats the 10-minute
+      // cache even when the shell itself is stale
+      var css = document.querySelector('link[href*="./styles.css?v=f08a463a"]');
+      if (css && ver) css.href = './styles.css?v=' + ver;
+      return load('config.js', ver).then(function () { return load('app.js', ver); });
+    }
+    fetch('./version.json?t=' + Date.now(), { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : {}; })
+      .then(function (v) { return boot(v && v.build); })
+      .catch(function () { return boot(''); });
+  })();
+</script>
+</body>
+</html>

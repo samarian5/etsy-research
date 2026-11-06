@@ -1,0 +1,11 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Etsy research</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+  // A truncated sign-in link can land on a deeper path. The fragment (and any
+  // session it carries) survives a client-side redirect, so forward it to the board.
+  var rest = location.pathname.replace(/^\/etsy-research\/?/, '');
+  location.replace('/etsy-research/' + (rest ? '' : '') + location.search + location.hash);
+</script>
+<p style="font:15px system-ui;padding:40px">Moving to the <a href="/etsy-research/">Etsy research board</a>…</p>
