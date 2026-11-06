@@ -127,6 +127,14 @@ class Supa:
         return self._call("POST", "/rest/v1/rpc/set_page_budget",
                           {"p_token": token, "p_pages_per_day": pages_per_day}) or 0
 
+    def note_candidates(self, keywords: list[str], source: str = "related-search") -> int:
+        """Store the related-search chips Etsy printed. Deduped in SQL by keyword."""
+        if not keywords:
+            return 0
+        out = self._call("POST", "/rest/v1/rpc/note_candidates",
+                         {"p_keywords": keywords, "p_source": source})
+        return int(out or 0)
+
     def prune(self, keep_days: int = 7) -> int:
         return self._call("POST", "/rest/v1/rpc/prune_snapshots",
                           {"p_keep_days": keep_days}) or 0
@@ -155,7 +163,11 @@ class Supa:
     KEEP = ("listing_id", "url", "title", "shop_name", "shop_url", "price_usd",
             "currency", "favorites", "listing_review_count", "listing_rating",
             "thumbnail_url", "category_path", "description", "is_bestseller",
-            "is_star_seller", "free_shipping", "captured_at", "page", "position")
+            "is_star_seller", "free_shipping", "captured_at", "page", "position",
+            # 0010: signal that is already on the page and was being thrown away
+            "price_original_usd", "shop_review_count", "shop_rating",
+            "listing_date", "image_count", "availability", "quantity",
+            "shipping_origin", "is_ad", "discount_pct")
 
     def ingest(self, rows: list[dict], run_id: str, keyword: str,
                batch: int = 25) -> dict:
@@ -169,7 +181,7 @@ class Supa:
                 slim = {k: r.get(k) for k in self.KEEP if r.get(k) is not None}
                 slim["listing_id"] = str(r["listing_id"])
                 slim["keyword"] = keyword
-                for flag in ("is_bestseller", "is_star_seller", "free_shipping"):
+                for flag in ("is_bestseller", "is_star_seller", "free_shipping", "is_ad"):
                     if slim.get(flag) is not None:
                         slim[flag] = bool(slim[flag])
                 chunk.append(slim)
