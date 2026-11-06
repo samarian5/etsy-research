@@ -83,7 +83,9 @@ class TestParsers(TestCase):
         self.assertAlmostEqual(d["listing_rating"], 4.8)
         self.assertEqual(d["favorites"], 1847)
         self.assertEqual(d["shop_name"], "SunnyThreads")
-        self.assertTrue(d["is_bestseller"])
+        # A word in the page text is not a badge: since 0010 both flags come from
+        # their element (the fixture mentions "Bestseller" in prose only).
+        self.assertFalse(d["is_bestseller"])
         self.assertTrue(d["free_shipping"])
         self.assertIn("Soft cotton tee", d["description"])
 
