@@ -65,8 +65,38 @@ class SessionBudgetTests(unittest.TestCase):
         self.assertEqual(run_chunk.session_pages(5, page_loads=10), 1)
 
 
+class WorkerPoolShapeTests(unittest.TestCase):
+    """The pool is only parallel if three things line up.
+
+    A worker slot, the concurrency group that lets two slots run at once, and a
+    balancer that counts a slot as busy while it is actually crawling. Each of
+    these is a one-line change that silently collapses the pool back to a single
+    crawler.
+    """
+
+    ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+    def test_live_filter_counts_the_status_the_crawler_writes(self):
+        # start_run() writes 'running'. A filter that only knows the GitHub-side
+        # names makes every slot look free, and the balancer sends duplicates.
+        sql = (self.ROOT / "db/supabase/0009_workers.sql").read_text()
+        live_clause = sql.split("), live as (")[1].split(")")[0]
+        self.assertIn("'running'", live_clause)
+
+    def test_the_dispatcher_sends_the_slot_it_chose(self):
+        src = (self.ROOT / "scripts/dispatch_slice.py").read_text()
+        self.assertIn('"worker": slot', src)
+        self.assertIn("queue_health", src)
+        self.assertIn("DISPATCH_COOLDOWN", src)
+
+    def test_the_crawler_labels_its_run(self):
+        src = (self.ROOT / "scripts/supa_run.py").read_text()
+        self.assertIn('os.environ.get("WORKER")', src)
+        self.assertIn("worker=worker", src)
+
+
 class WorkflowShapeTests(unittest.TestCase):
-    """A workflow GitHub cannot parse fails as "a run with zero jobs", 5 s apart —
+    """A workflow GitHub cannot parse fails as a run with zero jobs, 5 s apart —
     which is how eight dead runs appeared on 2026-11-04. Parse it before pushing."""
 
     def setUp(self):
