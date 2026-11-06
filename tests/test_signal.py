@@ -80,6 +80,12 @@ class DetailSignalTests(unittest.TestCase):
         self.assertEqual(self.detail["shipping_origin"], "TX/US")
         self.assertEqual(self.detail["quantity"], 973)
 
+    def test_struck_through_price_is_measured_not_guessed(self):
+        # "Original Price: $14.79" on a $4.44 listing — a 70 % discount, read from
+        # span.wt-text-strikethrough rather than inferred from a second number.
+        self.assertEqual(float(self.detail["price_original_usd"]), 14.79)
+        self.assertEqual(self.detail["discount_pct"], 70.0)
+
     def test_free_shipping_is_not_the_sitewide_promo(self):
         fake = BeautifulSoup(
             "<html><body><p>Free shipping on orders over $35</p></body></html>", "html.parser"
