@@ -1,0 +1,13 @@
+{
+ "run_id": "demo-0002",
+ "keyword": "t-shirt",
+ "depth": 20,
+ "status": "succeeded",
+ "started_at": "2026-11-04T11:58:00+00:00",
+ "finished_at": "2026-11-04T12:00:00+00:00",
+ "pages_done": 1,
+ "occurrences": 3,
+ "unique_listings": 3,
+ "challenges": 0,
+ "fixture": true
+}
