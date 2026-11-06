@@ -137,6 +137,43 @@ board editable from any browser.
   `gh-pages` branch through the Git database API (Pages only serves `/` or `/docs`,
   and `/docs` already holds the ADRs).
 
+### Board design (`web/`)
+
+The board is read at a glance, several times a day, to answer one question: *is this
+keyword worth entering?* Everything on the page is ordered by that question, and
+decoration comes last.
+
+```
+KPI strip      four numbers: listings, readings, keywords, search pages used today
+Market         one row per keyword — price, demand at the top, how weak the field is
+Listings       the products themselves, filtered and sorted, with a detail drawer
+Crawler        the queue, intervals, depth, today's budget
+Recent slices  what ran, and whether Etsy let it through
+```
+
+* **Market** is the decision table. It reads left to right: *listings in crawl* (sample
+  size, not market size), *median price* (what buyers pay), *top 10% favourites* (the bar
+  a new listing must clear), *weak sellers* (share with <50 reviews — high means the
+  field is soft), *listed ≤ 90 days* (high means newcomers still rank), *next check*.
+  Source: the `keyword_daily` view, one row per keyword per crawl day, latest row wins.
+* **KPI strip** reads `stats` + `usage_today`; the budget bar is the same value the
+  crawler enforces in `claim_slice()`, so the page cannot promise pages the queue will
+  refuse.
+* **Tokens only.** Every colour, space, radius and type size is a CSS variable in
+  `:root`; the dark theme is a token override under `prefers-color-scheme`, not a second
+  stylesheet. `--brand` is Etsy terracotta, `--up` is money-green.
+* **Numbers are tabular** wherever they can change between crawls, so columns do not
+  jitter when a row updates.
+* **No CDN, no build step, no framework.** GitHub Pages serves four files; anything a
+  design library would give (tokens, a grid, cards, a drawer, a segmented control) is
+  written directly in `styles.css` + `app.js`. A missing font or blocked CDN cannot
+  break the board.
+* **Mobile:** under 640 px each table row becomes a labelled block (`data-label` on the
+  cell) and the listing grid goes two-up; nothing scrolls sideways.
+* **Honest states:** `null` renders as `—`, never as a zero or a guess. Rows crawled
+  before a column existed stay dashed until that listing is re-crawled.
+
+
 ### Supabase free tier — what actually constrains it
 
 | Limit | Value | Consequence |
