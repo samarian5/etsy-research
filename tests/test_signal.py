@@ -97,6 +97,17 @@ class NegativeBadgeTests(unittest.TestCase):
         self.assertFalse(detail["is_star_seller"])
         self.assertTrue(detail["is_bestseller"])          # this listing does have it
 
+    def test_avatar_template_markup_is_not_a_badge(self):
+        """Every listing page ships the star-seller avatar badge inside a <template>.
+
+        Trusting that class reports 100% star sellers. The page below has the
+        markup and is not a star seller; only rendered label text counts.
+        """
+        html = load("detail_no_star.html.gz")
+        soup = BeautifulSoup(html, "html.parser")
+        self.assertIsNotNone(soup.select_one('[class*="badge-star-seller"]'))
+        self.assertFalse(extract_detail(html, soup, "https://www.etsy.com/listing/4343268015/")["is_star_seller"])
+
 
 @unittest.skipUnless((FX / "search_page.html.gz").exists(), "fixture missing")
 class SearchPageTests(unittest.TestCase):
