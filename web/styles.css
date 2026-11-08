@@ -804,3 +804,46 @@ table.data.compact td { padding: 9px 12px; font-size: var(--t-sm); }
 
 @media (max-width: 860px) { .design-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 360px) { .design-grid { grid-template-columns: 1fr; } }
+
+/* ── design library ────────────────────────────────────────────────────────
+ * A wall of designs, not a table: the decision ("would I make this?") is visual.
+ * Every card keeps a fixed 4/5 image box so the grid stays even while the 570 px
+ * thumbnails stream in lazily. */
+.lib-toolbar { flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 10px; }
+.lib-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(216px, 1fr));
+  gap: 14px; margin: 6px 0 8px;
+}
+.lib-card {
+  display: flex; flex-direction: column; overflow: hidden;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--card);
+  text-decoration: none; color: inherit; transition: border-color .12s, transform .12s;
+}
+.lib-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.lib-img { position: relative; display: block; aspect-ratio: 4 / 5; background: var(--border); overflow: hidden; }
+.lib-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.lib-rank {
+  position: absolute; top: 6px; left: 6px; padding: 1px 6px; border-radius: 999px;
+  background: rgba(0,0,0,.62); color: #fff; font-size: 11px; font-variant-numeric: tabular-nums;
+}
+.lib-body { display: flex; flex-direction: column; gap: 5px; padding: 9px 10px 11px; }
+.lib-phrase {
+  font-size: 14px; font-weight: 700; line-height: 1.25; font-family: var(--font-display, inherit);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.lib-phrase.quiet { font-weight: 500; color: var(--muted); font-size: 12px; }
+.lib-title {
+  font-size: 11.5px; color: var(--muted); line-height: 1.35;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.lib-meta { display: flex; flex-wrap: wrap; gap: 2px 8px; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.lib-demand b { color: var(--foreground); }
+.lib-tags, .lib-badges { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.lib-colours { display: inline-flex; gap: 3px; margin-left: 2px; }
+.swatch { width: 11px; height: 11px; border-radius: 3px; border: 1px solid rgba(0,0,0,.18); display: inline-block; }
+.chip.hot { border-color: var(--accent); color: var(--accent); }
+@media (max-width: 640px) {
+  .lib-grid { grid-template-columns: repeat(2, 1fr); gap: 9px; }
+  .lib-phrase { font-size: 12.5px; }
+  .lib-title { display: none; }
+}
