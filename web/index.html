@@ -253,6 +253,73 @@
     </p>
   </section>
 
+  <!-- ── design briefs ────────────────────────────────────────────────── -->
+  <section class="card-block" id="briefs" aria-labelledby="briefs-title">
+    <div class="block-head split">
+      <div>
+        <h2 id="briefs-title">Design briefs</h2>
+        <div class="title-row"><h3>What to design next, and what the winners look like</h3></div>
+        <p class="block-sub">
+          Every shirt is filed into one buyer-identity niche by its title. A niche scores high when
+          its winners show real demand but the niche is not yet saturated. Click a row to see the
+          six best-performing designs inside it.
+        </p>
+      </div>
+      <div class="field">
+        <label for="db-kw">Keyword</label>
+        <select id="db-kw"></select>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table class="data" id="brief-table">
+        <thead>
+          <tr>
+            <th scope="col">Niche</th>
+            <th scope="col">Opportunity</th>
+            <th scope="col">Listings</th>
+            <th scope="col">Median favourites</th>
+            <th scope="col">Top 10%</th>
+            <th scope="col">Median price</th>
+            <th scope="col">Shops</th>
+            <th scope="col">New (90 d)</th>
+          </tr>
+        </thead>
+        <tbody id="brief-body"></tbody>
+      </table>
+    </div>
+    <p class="note" id="brief-note">
+      Opportunity combines demand (the favourites a top-10% listing in this niche has), how open the
+      niche is (fewer listings and shops score higher) and freshness — then shrinks towards zero
+      below 30 listings, so one viral shirt cannot invent a niche.
+    </p>
+
+    <h3 class="sub-head" id="designs-head">Designs in this niche</h3>
+    <p class="panel-sub">
+      The six most-favourited shirts in the selected niche. Read the idea, the phrasing and the
+      typography — the point is your own version of a concept that already works, never a copy.
+    </p>
+    <div class="design-grid" id="design-grid"></div>
+
+    <h3 class="sub-head">What the winners are printed on</h3>
+    <p class="panel-sub">
+      Blank and print method, read from the descriptions of the shirts this crawler has seen. This
+      is the cost-and-margin half of the decision, not the design half.
+    </p>
+    <div class="table-wrap">
+      <table class="data compact">
+        <thead>
+          <tr>
+            <th scope="col">Blank / method</th>
+            <th scope="col">Share of shirts</th>
+            <th scope="col">Median favourites</th>
+          </tr>
+        </thead>
+        <tbody id="production-body"></tbody>
+      </table>
+    </div>
+  </section>
+
   <!-- ── listings ──────────────────────────────────────────────────────── -->
   <section class="card-block" id="browse" aria-labelledby="browse-title">
     <div class="block-head">
