@@ -277,6 +277,55 @@ whole board to anyone holding the public anon key.
 says so in its header. `fav_per_day` is floored at one day so an eight-hour-old
 listing does not look like a rocket.
 
+## Design briefs — from "which market" to "what do I design next"
+
+The market tables answer *where* the demand is. This layer answers *what to make*:
+it files every shirt into a buyer-identity niche and puts the winning designs on
+screen so the next decision is visual.
+
+```
+titles ──► design_niches (29 regexes) ──► listing_niche_mv (matview)
+                                              │
+                    niche_stats ◄─────────────┤
+                         │                    └──► niche_examples (6 winners + thumbnail)
+                    design_briefs  ← demand vs saturation, shrunk for small samples
+```
+
+**Opportunity score.** `0.55 × demand + 0.25 × freshness + 0.20 × openness`, then
+multiplied by `min(1, listings / 30)`:
+
+* **demand** — percentile of the niche's p90 favourites inside that keyword, i.e. what
+  a top-10 % listing there actually has;
+* **openness** — inverse percentile of listing count (fewer listings, more room);
+* **freshness** — share published in the last 90 days, and only counted when ≥30 % of
+  the niche has a publish date; otherwise it is neutral. Without that rule the still-
+  running backfill made every niche look like a gold rush;
+* the small-sample shrink stops a 9-listing niche with one viral shirt from
+  outranking a 70-listing niche with a real median.
+
+**Designs, not just numbers.** `niche_examples` returns the six most-favourited shirts
+per niche with `image_url`, which the board renders as a 570 px thumbnail grid
+(Etsy serves a 2,000 px original by default; the CDN accepts a resize segment).
+Read the *idea and the phrasing*, never the artwork itself.
+
+**What they are printed on.** `production_stats` reads the blank and the method out of
+descriptions — Comfort Colors, Gildan, Bella+Canvas, DTF, DTG, screen print,
+embroidery — with median favourites per method. On the current sample Comfort Colors
+appears on 41 % of shirts and screen-printed shirts carry the highest median
+favourites, which is the cost-and-margin half of the decision.
+
+**Why a matview.** Matching 2,600 titles against 29 regexes took longer than
+PostgREST's statement timeout, and `?limit=6` is applied *after* the view — the panel
+rendered empty with a 57014. `listing_niche_mv` is refreshed once per crawl
+(`refresh_design_views()`, called at the end of `scripts/supa_run.py`) with
+`REFRESH ... CONCURRENTLY`, so readers keep the previous snapshot.
+
+**Two honesty guards on age.** `0016_age_guard.sql` rejects a publish date later than
+`first_seen` or earlier than 2015, and refuses to rank a listing whose "age" is 0–2
+days but which already holds 1,000+ favourites with one reading — that is a re-list
+inheriting favourites, not demand measured over a day. 59 rows were set aside on the
+first run.
+
 ## Runs every second day, unattended (legacy artifact path)
 
 `cron: "10 4 */2 * *"` in the workflow starts a refresh every second day at 04:10 UTC.
