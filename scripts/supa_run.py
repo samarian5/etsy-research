@@ -128,7 +128,11 @@ def main() -> int:
 
     kw = slice_["keyword"]
     pf, pt = int(slice_["page_from"]), int(slice_["page_to"])
-    run_id = os.environ.get("GITHUB_RUN_ID") or f"local-{int(time.time())}"
+    worker = os.environ.get("WORKER") or "w1"
+    # Every shard in a matrix run shares GITHUB_RUN_ID, so the raw value collides
+    # on runs.run_id and the second shard dies on insert. The slot is what makes
+    # a run unique.
+    run_id = (os.environ.get("GITHUB_RUN_ID") or f"local-{int(time.time())}") + f"-{worker}"
     gha_url = None
     if os.environ.get("GITHUB_RUN_ID") and os.environ.get("GITHUB_REPOSITORY"):
         gha_url = (f"https://github.com/{os.environ['GITHUB_REPOSITORY']}"
@@ -136,8 +140,7 @@ def main() -> int:
 
     ip = egress_ip()
     log(f"[net] egress ip {ip}")
-    worker = os.environ.get("WORKER") or "w1"
-    log(f"[worker] slot {worker}")
+    log(f"[worker] slot {worker} (run {run_id})")
     supa.start_run(run_id, kw, pf, pt, egress_ip=ip, gha_url=gha_url, worker=worker)
 
     enrich: list[dict] = []
