@@ -35,7 +35,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote_plus, urlparse, parse_qs
 
-SEARCH_URL = "https://www.etsy.com/search?q={q}&explicit=1&page={page}"
+SEARCH_URL = "https://www.etsy.com/search?q={q}&explicit=1&page={page}{extra}"
+
+# Etsy has no public "bestseller" API, but the search page accepts the same filter
+# the UI writes into its own URL. Star Seller is `shop_rel=star_seller`; the
+# semantic sibling for bestsellers is `shop_rel=best_seller` — the trick from the
+# design-research method: filter to proven sellers, then study what they sell.
+FILTERS = {"none": "", "best": "&shop_rel=best_seller"}
 LISTING_RE = re.compile(r"/listing/(\d+)")
 
 # ────────────────────────────── small parsers ────────────────────────────────
@@ -321,7 +327,7 @@ def extract_detail(html: str, soup, url: str) -> dict:
         "listing_date": None, "availability": None, "quantity": None,
         "shipping_origin": None,
         "category_path": None, "description": None, "description_html": None,
-        "thumbnail_url": None,
+        "thumbnail_url": None, "gallery": None, "carts": None, "bought_24h": None,
         "extraction": {"jsonld": False, "embedded": False, "dom": False, "warnings": []},
     }
     ex = out["extraction"]
@@ -346,8 +352,17 @@ def extract_detail(html: str, soup, url: str) -> dict:
         if desc:
             out["description"] = " ".join(str(desc).split())[:20000]
         img = ld.get("image")
+        # The whole gallery, not just the cover: the cover is a lifestyle mockup,
+        # while one of the next few images is the flat artwork the DNA pass reads.
         if isinstance(img, list) and img:
             out["images_count"] = len(img)
+            urls = []
+            for it in img:
+                u = it.get("contentURL") or it.get("url") if isinstance(it, dict) else it
+                if isinstance(u, str) and u.startswith("http"):
+                    urls.append(u.replace("\\/", "/"))
+            if urls:
+                out["gallery"] = urls[:10]
             img = img[0]
         if isinstance(img, dict):                      # Etsy ships ImageObject{"contentURL": ...}
             img = img.get("contentURL") or img.get("url")
@@ -474,6 +489,20 @@ def extract_detail(html: str, soup, url: str) -> dict:
                     break
                 except ValueError:
                     continue
+
+    # Urgency counters. These are Etsy's own statements about recent demand and the
+    # closest public substitute for the sales numbers EverBee estimates:
+    #   "16 people bought this in the last 24 hours."
+    #   "12 people have this in their carts right now."
+    if page_text:
+        flat0 = re.sub(r"\s+", " ", page_text.replace("\u00a0", " "))
+        m = re.search(r"([\d,.]+[kKmM]?)\s+people bought this\b", flat0)
+        if m:
+            out["bought_24h"] = parse_count(m.group(1))
+        m = re.search(r"([\d,.]+[kKmM]?)\s+(?:people|others)\s+(?:have|has) this in (?:their|someone's) carts?",
+                      flat0) or re.search(r"In ([\d,.]+[kKmM]?) (?:carts?|baskets?)", flat0)
+        if m:
+            out["carts"] = parse_count(m.group(1))
 
     # Shop reviews as printed in the shop card: "(2.3k reviews)".
     if soup and out["shop_review_count"] is None:
@@ -938,7 +967,7 @@ class Crawl:
                 print("[crawl] request budget exhausted during discovery", flush=True)
                 self.stopped_reason = "budget"
                 break
-            url = SEARCH_URL.format(q=quote_plus(kw), page=page_no)
+            url = SEARCH_URL.format(q=quote_plus(kw), page=page_no, extra=FILTERS[self.args.filter])
             self.budget_left -= 1
             print(f"[crawl] search page {page_no}/{last}: {url}", flush=True)
             if not self.navigate(sb, url, f"search p{page_no}"):
@@ -1113,6 +1142,9 @@ class Crawl:
                 "is_ad": card.get("is_ad"),
                 "category_path": detail["category_path"],
                 "thumbnail_url": detail["thumbnail_url"],
+                "gallery": detail["gallery"],
+                "carts": detail["carts"],
+                "bought_24h": detail["bought_24h"],
                 "description": detail["description"],
                 "description_html": detail["description_html"],
                 "description_chars": len(detail["description"] or ""),
@@ -1235,6 +1267,8 @@ def main() -> int:
                    help="JSON list of {listing_id,url} pages to visit *before* this slice's own "
                         "listings — used to backfill publish dates on listings we only ever saw "
                         "as search cards")
+    p.add_argument("--filter", default="none", choices=sorted(FILTERS),
+                   help="best = Etsy bestseller-filtered search, i.e. proven designs only")
     p.add_argument("--started-at", default=now())
     args = p.parse_args()
     if not args.pages_to:
