@@ -208,7 +208,9 @@ def main() -> int:
 
         _, url, st, txt, conf = best
         lay = layout_of(txt, st)
-        phrase = norm_phrase(txt)
+        # Group only phrases OCR is sure about: a garbled "Enolesl" in the pattern
+        # library is worse than a gap, because patterns are the deliverable.
+        phrase = norm_phrase(txt) if (conf >= 0.80 and len(txt) >= 3) else None
         payload = {
             "design_image_url": re.sub(r"/il_[^/.]+\.", "/il_570xN.", url),
             "design_text": txt or None,
