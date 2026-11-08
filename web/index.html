@@ -132,6 +132,127 @@
     </dl>
   </section>
 
+  <!-- ── signals ───────────────────────────────────────────────────────── -->
+  <section class="card-block" id="signals" aria-labelledby="signals-title">
+    <div class="block-head split">
+      <div>
+        <h2 id="signals-title">Signals</h2>
+        <div class="title-row"><h3>Where a new design can still win</h3></div>
+        <p class="block-sub">
+          Everything below is derived from data already stored — publish dates, favourite counts,
+          search rank — so it costs no extra page loads. Favourites stand in for sales: Etsy
+          publishes no sold counts, and a favourite is the closest public sign of intent to buy.
+        </p>
+      </div>
+      <div class="field">
+        <label for="sig-kw">Focus keyword</label>
+        <select id="sig-kw"></select>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table class="data">
+        <thead>
+          <tr>
+            <th scope="col">Keyword</th>
+            <th scope="col">Entry score</th>
+            <th scope="col">Sample</th>
+            <th scope="col">Median price</th>
+            <th scope="col">Top 10% favourites</th>
+            <th scope="col">Weak sellers</th>
+            <th scope="col">New in top 30</th>
+            <th scope="col">Shop HHI</th>
+          </tr>
+        </thead>
+        <tbody id="entry-body"></tbody>
+      </table>
+    </div>
+
+    <dl class="legend">
+      <div>
+        <dt>Entry score</dt>
+        <dd>0–100. How weak the sellers are, how often new listings break into the top 30, how
+          spread out the shops are, and how much demand the winners show — combined. Higher means
+          an easier market to enter.</dd>
+      </div>
+      <div>
+        <dt>New in top 30</dt>
+        <dd>Share of the first 30 results published in the last 90 days. This single number decides
+          whether a new shop can rank at all.</dd>
+      </div>
+      <div>
+        <dt>Shop HHI</dt>
+        <dd>How concentrated the market is across shops. Near 0 means hundreds of small sellers;
+          above 0.25 means a handful of shops own the results.</dd>
+      </div>
+    </dl>
+
+    <div class="signal-grid">
+      <div>
+        <h3 class="sub-head">Do new listings reach the top?</h3>
+        <p class="panel-sub">
+          Every listing in the sample, bucketed by age, with the share of each bucket that appeared
+          in the first 20 results. If the 0–7 day row is near zero for a keyword, that market is
+          closed to newcomers.
+        </p>
+        <div class="table-wrap">
+          <table class="data compact">
+            <thead>
+              <tr>
+                <th scope="col">Age</th>
+                <th scope="col">Top-20 share</th>
+                <th scope="col">Median favourites/day</th>
+                <th scope="col">Listings</th>
+              </tr>
+            </thead>
+            <tbody id="cohort-body"></tbody>
+          </table>
+        </div>
+      </div>
+      <div>
+        <h3 class="sub-head">Launch curve</h3>
+        <p class="panel-sub">
+          Median favourites per day, grouped by the week a listing was published. A flat line means
+          age barely matters; a falling line means the niche rewards whatever is newest.
+        </p>
+        <div class="curve" id="curve-body" role="img" aria-label="Favourites per day by publication week"></div>
+      </div>
+    </div>
+
+    <h3 class="sub-head">Fastest movers</h3>
+    <p class="panel-sub">
+      Listings under 90 days old, ranked by favourites gained per day since publication — the
+      closest thing to “what is working right now”.
+    </p>
+    <ol class="movers" id="movers-body"></ol>
+
+    <h3 class="sub-head">Title language that wins</h3>
+    <p class="panel-sub">
+      Words and two-word phrases taken from titles, ranked by the median favourites of the listings
+      that use them. It answers a narrow question: which words keep showing up on the listings that
+      get saved?
+    </p>
+    <div class="table-wrap">
+      <table class="data compact">
+        <thead>
+          <tr>
+            <th scope="col">Phrase</th>
+            <th scope="col">Listings</th>
+            <th scope="col">Median favourites</th>
+            <th scope="col">Top 10%</th>
+            <th scope="col">Median price</th>
+            <th scope="col">New (30 d)</th>
+          </tr>
+        </thead>
+        <tbody id="phrase-body"></tbody>
+      </table>
+    </div>
+    <p class="note">
+      A phrase needs at least three listings in the sample to appear — a word used once by one huge
+      listing is noise, not a pattern.
+    </p>
+  </section>
+
   <!-- ── listings ──────────────────────────────────────────────────────── -->
   <section class="card-block" id="browse" aria-labelledby="browse-title">
     <div class="block-head">
