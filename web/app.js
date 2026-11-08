@@ -290,7 +290,7 @@ async function submitGate(ev) {
 function startBoard() {
   const board = [
     ['listings', loadListings], ['stats', loadStats], ['queue', loadQueue], ['usage', loadUsage],
-    ['market', loadMarket],
+    ['market', loadMarket], ['signals', loadSignals],
   ];
   board.forEach(([name, fn]) => {
     fn().then(hideBanner).catch((e) => showBanner(`${name} failed to load: ${e.message} (build ${BUILD})`));
@@ -929,6 +929,119 @@ async function loadMarket() {
   $('market-body').innerHTML = rows.map(marketRow).join('');
   $('market-empty').hidden = rows.length > 0;
 }
+
+/* ── signals ───────────────────────────────────────────────────────────
+ * Everything on this board comes from columns the crawler already stores:
+ * listings.listing_date, snapshots.favorites, listing_keywords.best_rank and
+ * listings.is_ad. No extra page loads — which matters, because a page load is
+ * the one thing here that costs a captcha.
+ */
+const SIG = { kw: '', entry: [], cohorts: [], curve: [], winners: [], phrases: [] };
+
+const COHORTS = ['0-7d', '8-30d', '31-90d', '90d+'];
+const COHORT_LABEL = { '0-7d': '0–7 days', '8-30d': '8–30 days', '31-90d': '31–90 days', '90d+': '90+ days' };
+const perDay = (v) => (v === null || v === undefined ? '—'
+  : Number(v) >= 100 ? num(Math.round(Number(v))) : Number(v).toFixed(1));
+
+async function loadSignals() {
+  const [entry, cohorts, winners, curve, phrases] = await Promise.all([
+    rest('keyword_entry?select=*&order=entry_score.desc'),
+    rest('age_cohorts?select=*'),
+    rest('new_winners?select=keyword,etsy_id,title,shop_name,price_usd,favorites,age_days,fav_per_day,best_rank,is_ad,seller_reviews&order=fav_per_day.desc&limit=300'),
+    rest('launch_curve?select=*&order=week.asc'),
+    rest('phrase_stats?select=*&order=median_favorites.desc&limit=800'),
+  ]);
+  SIG.entry = entry.data || [];
+  SIG.cohorts = cohorts.data || [];
+  SIG.winners = winners.data || [];
+  SIG.curve = curve.data || [];
+  SIG.phrases = phrases.data || [];
+  if (!SIG.kw || !SIG.entry.some((e) => e.keyword === SIG.kw)) {
+    // The board exists to answer questions about these two; open on the main one
+    // when it has data, rather than on whichever keyword happens to score highest.
+    const wanted = SIG.entry.find((e) => e.keyword === 'tshirt');
+    SIG.kw = wanted?.keyword || SIG.entry[0]?.keyword || '';
+  }
+  const sel = $('sig-kw');
+  sel.innerHTML = SIG.entry.map((e) => `<option value="${esc(e.keyword)}">${esc(e.keyword)}</option>`).join('');
+  sel.value = SIG.kw;
+  renderSignals();
+}
+
+function renderSignals() {
+  const kw = SIG.kw;
+
+  /* 1. entry score — one row per keyword */
+  $('entry-body').innerHTML = SIG.entry.map((e) => {
+    const score = Math.max(0, Math.min(100, Math.round(Number(e.entry_score) || 0)));
+    const tone = score >= 60 ? ' high' : score <= 35 ? ' low' : '';
+    return `<tr class="${e.keyword === kw ? 'focus-row' : ''}">
+      <td data-label="Keyword"><b>${esc(e.keyword)}</b></td>
+      <td data-label="Entry score"><span class="score${tone}"><i><b style="width:${score}%"></b></i><span class="pct">${score}</span></span></td>
+      <td data-label="Sample">${num(e.listings)}</td>
+      <td data-label="Median price">${money(e.median_price)}</td>
+      <td data-label="Top 10% favourites">${num(e.p90_fav)}</td>
+      <td data-label="Weak sellers">${shareBar(e.weak_seller_share)}</td>
+      <td data-label="New in top 30">${shareBar((Number(e.pct_new_in_top30) || 0) / 100)}</td>
+      <td data-label="Shop HHI">${e.shop_hhi == null ? '—' : Number(e.shop_hhi).toFixed(3)}</td>
+    </tr>`;
+  }).join('');
+
+  /* 2. age cohorts for the focus keyword */
+  const rows = COHORTS.map((c) => SIG.cohorts.find((r) => r.keyword === kw && r.cohort === c)).filter(Boolean);
+  $('cohort-body').innerHTML = rows.length ? rows.map((r) => `<tr>
+      <td data-label="Age">${esc(COHORT_LABEL[r.cohort] || r.cohort)}</td>
+      <td data-label="Top-20 share">${shareBar((Number(r.pct_in_top20) || 0) / 100)}</td>
+      <td data-label="Median favourites/day">${perDay(r.median_fav_per_day)}</td>
+      <td data-label="Listings">${num(r.listings)}</td>
+    </tr>`).join('')
+    : '<tr><td colspan="4" class="tiny">No age data yet — this fills in as crawls land.</td></tr>';
+
+  /* 3. launch curve — bars scaled to the peak week */
+  const curve = SIG.curve.filter((r) => r.keyword === kw).slice(-14);
+  const peak = Math.max(1, ...curve.map((r) => Number(r.median_fav_per_day) || 0));
+  $('curve-body').innerHTML = curve.length ? curve.map((r) => {
+    const h = Math.max(2, Math.round(((Number(r.median_fav_per_day) || 0) / peak) * 100));
+    const label = new Date(r.week).toLocaleDateString([], { month: 'short', day: 'numeric' });
+    return `<div class="curve-col" title="${label} · ${perDay(r.median_fav_per_day)} favourites/day · ${r.listings} listings">
+      <b class="curve-val">${perDay(r.median_fav_per_day)}</b>
+      <span class="curve-bar"><i style="height:${h}%"></i></span>
+      <span class="curve-week">${label}</span>
+    </div>`;
+  }).join('') : '<p class="tiny">Not enough dated listings yet.</p>';
+
+  /* 4. fastest movers */
+  const movers = SIG.winners.filter((w) => w.keyword === kw).slice(0, 8);
+  $('movers-body').innerHTML = movers.length ? movers.map((w, i) => `<li class="mover">
+      <span class="rank">${i + 1}</span>
+      <div class="mover-main">
+        <a href="https://www.etsy.com/listing/${esc(w.etsy_id)}" target="_blank" rel="noopener">${esc(w.title || '(no title)')}</a>
+        <div class="mover-meta">
+          ${w.shop_name ? `<span>${esc(w.shop_name)}</span>` : ''}
+          <span>${w.age_days == null ? 'age unknown' : `${num(w.age_days)} days old`}</span>
+          <span>rank ${w.best_rank ?? '—'}</span>
+          <span>${money(w.price_usd)}</span>
+          <span>${num(w.favorites)} favourites</span>
+        </div>
+      </div>
+      <div class="mover-rate"><b>${perDay(w.fav_per_day)}</b><span>fav / day</span></div>
+    </li>`).join('')
+    : '<li class="tiny">No dated listings for this keyword yet.</li>';
+
+  /* 5. title phrases */
+  const phrases = SIG.phrases.filter((p) => p.keyword === kw && Number(p.listings) >= 3).slice(0, 14);
+  $('phrase-body').innerHTML = phrases.length ? phrases.map((p) => `<tr>
+      <td data-label="Phrase"><b>${esc(p.phrase)}</b>${Number(p.words) === 2 ? ' <span class="tag quiet">2 words</span>' : ''}</td>
+      <td data-label="Listings">${num(p.listings)}</td>
+      <td data-label="Median favourites">${num(p.median_favorites)}</td>
+      <td data-label="Top 10%">${num(p.p90_favorites)}</td>
+      <td data-label="Median price">${money(p.median_price)}</td>
+      <td data-label="New (30 d)">${shareBar((Number(p.pct_listed_last_30d) || 0) / 100)}</td>
+    </tr>`).join('')
+    : '<tr><td colspan="6" class="tiny">No phrase data yet.</td></tr>';
+}
+
+on('sig-kw', 'change', () => { SIG.kw = $('sig-kw').value; renderSignals(); });
 
 /* ── runs ────────────────────────────────────────────────────────────── */
 async function loadRuns() {
