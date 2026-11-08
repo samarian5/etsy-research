@@ -143,8 +143,19 @@ select phrase_norm,
        max(demand)                                           as top_demand
   from public.design_library
  where length(phrase_norm) between 4 and 120
+   -- OCR also reads blank labels and placeholder order-form text ("Comfort Colors",
+   -- "custom text", "your image here"). Those are not design ideas and would sit at
+   -- the top of a list sorted by frequency, so they are named and excluded.
+   and phrase_norm not in ('comfort colors', 'comfort colours', 'bella canvas',
+                           'gildan', 'next level', 'bella and canvas', 'custom',
+                           'custom text', 'your image here', 'your text here',
+                           'your design here', 'personalized', 'personalised',
+                           'free shipping', 'fast shipping', 'etsy')
  group by phrase_norm
-having count(*) > 1;
+-- Two conditions, both about independence: the phrase must appear on more than one
+-- shirt AND in more than one shop. A single shop repeating its own watermark
+-- ("kick ash co" × 8) is a brand, not a validated idea.
+having count(*) > 1 and count(distinct shop_name) > 1;
 
 -- The winners inside each pattern, for the visual check.
 create view public.pattern_examples
