@@ -187,7 +187,11 @@ class Supa:
             # 0010: signal that is already on the page and was being thrown away
             "price_original_usd", "shop_review_count", "shop_rating",
             "listing_date", "image_count", "availability", "quantity",
-            "shipping_origin", "is_ad", "discount_pct")
+            "shipping_origin", "is_ad", "discount_pct",
+            # 0019: the design half — gallery, urgency counters. The DNA fields
+            # (design_text, layout, bg, colours) are filled later by design_dna.py
+            # reading the artwork itself, never guessed here.
+            "gallery", "carts", "bought_24h")
 
     def ingest(self, rows: list[dict], run_id: str, keyword: str,
                batch: int = 25) -> dict:
