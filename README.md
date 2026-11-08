@@ -192,6 +192,91 @@ First live slice (run `41850990686`, 2026-11-04): claimed `tshirt` pages 1–2, 
 A daily budget of 24 search pages is enforced inside `claim_slice()`, so the 2-hour cadence
 cannot quietly turn into hammering — raise it in `settings` if you want more.
 
+## Scale-out: shards, laps, and the publish-date backfill
+
+The queue was always multi-consumer — `claim_slice()` takes its row with
+`for update skip locked` — so capacity was never limited by the database or by the
+number of repositories. It was limited by three things, all now fixed.
+
+### 1. One keyword could only ever be crawled once per interval
+
+`finish_slice()` used to push `due_at` a full `interval_hours` ahead. With `tshirt`
+at depth 60 and a 2-hour interval that is a **60-hour lap**, no matter how many
+workers were idle. `0013_slice_gap.sql` splits the two ideas:
+
+| state after a slice | next due |
+|---|---|
+| pages left in this lap | `now() + slice_gap_seconds` (180 s) |
+| lap finished (`next_page > depth`) | `now() + interval_hours` |
+
+So `interval_hours` now means "how often this keyword is revisited", and the gap
+means "how closely two slices of the same lap may follow". A full lap of both
+target keywords takes about two hours at six shards instead of two and a half days.
+
+### 2. Parallelism is a matrix, not twenty forks
+
+`supa-crawl.yml` takes `shards` (a JSON array, default `["w1","w2","w3"]`) and
+`max_parallel`. The `slice` job expands that list as `strategy.matrix.worker`, and
+its `concurrency.group` is `etsy-crawl-${{ matrix.worker }}` — evaluated per matrix
+instance, so a slot never overlaps itself while different slots run side by side.
+
+**Why not twenty repositories?** Twenty forks would multiply the Chrome profile
+caches, the secret surface and the log streams, and add twenty schedulers that can
+drift out of sync — for exactly the same number of parallel crawlers, because the
+concurrency-group name is what creates parallelism. The ceiling here is
+`--shards 20` in `scripts/dispatch_slice.py`.
+
+Two bugs surfaced while proving this, both fixed and both now covered:
+
+* every shard shared `GITHUB_RUN_ID`, so the second one died on
+  `runs.run_id` uniqueness — the run id is now `<run>-<slot>`;
+* a shard killed between `claim_slice()` and `finish_slice()` left its keyword in
+  `status='running'`, and the old `queue_health()` only counted `queued` when
+  deciding whether anything was due, so the pool idled behind a dead claim
+  (`0015_stale_claims.sql`: due = queued *or* running with a stale heartbeat, and
+  `claim_slice()` now reaps stale claims before choosing).
+
+### 3. Publish dates were the missing input, not the missing statistic
+
+Every time-based number — entry score, age cohorts, fastest movers, launch curve —
+is derived from `listings.listing_date`. That column only arrives with a **detail**
+page load ("Listed on Nov 3, 2026"); search cards carry no date at all. The two
+biggest keywords were first collected card-only, so they sat at **3.3% dated**.
+
+Rather than re-crawl blindly, `0014_enrich_queue.sql` adds a claimable backfill
+queue: `claim_enrich(n)` hands out the **most-favourited undated listings** first —
+the ones the freshness question is actually about — and marks `detail_at` at claim
+time so a dead runner releases its claims after a 12-hour cooldown. `scripts/supa_run.py`
+claims them (`ENRICH_PER_RUN`, default 8) and passes them to the crawler, which
+visits them *before* the slice's own listings through the same parser and payload
+path. The date parser was also hardened: `Re-listed on`, non-breaking spaces,
+`3 November 2026` and lowercase months all parse now, with cases in
+`tests/test_signal.py`.
+
+`enrich_health()` reports the coverage (`dated_pct`) so the backfill is measurable
+rather than hopeful.
+
+### The statistics that answer "what is working right now"
+
+| view | question it answers |
+|---|---|
+| `keyword_entry` | Is this market open? One 0–100 entry score from weak-seller share, new listings in the top 30, shop HHI and winner demand. |
+| `age_cohorts` | Do new listings reach the top? Top-20 share and median favourites/day by age band (0–7, 8–30, 31–90, 90+ days). |
+| `new_winners` | Which listings under 90 days old are moving? Ranked by favourites per day since publication. |
+| `launch_curve` | Does age matter here? Median favourites/day by the week a listing was published. |
+| `phrase_stats` | What do winning titles say? Words and two-word phrases ranked by the median favourites of the listings using them (n ≥ 3). |
+| `shop_concentration` | Who owns the results? HHI and top-shop share per keyword. |
+| `listing_stats` | Per-listing age, observed favourites/day, and whether the age came from Etsy or is missing. |
+
+All seven are `security_invoker`, with `anon` revoked and `SELECT` granted to
+`authenticated` only — Supabase grants `anon` everything on new public objects, and
+a view without `security_invoker` runs as its owner, which would have published the
+whole board to anyone holding the public anon key.
+
+**Favourites are the demand proxy.** Etsy publishes no sold counts, so every view
+says so in its header. `fav_per_day` is floored at one day so an eight-hour-old
+listing does not look like a rocket.
+
 ## Runs every second day, unattended (legacy artifact path)
 
 `cron: "10 4 */2 * *"` in the workflow starts a refresh every second day at 04:10 UTC.
