@@ -19,7 +19,8 @@ throughput only up to `max_pages_per_day`. Raise the budget to go faster; the
 dispatcher will fill the slots to match.
 
     python scripts/dispatch_slice.py                 # scale out as the queue justifies
-    python scripts/dispatch_slice.py --workers 4     # allow up to 4 slots
+    python scripts/dispatch_slice.py --shards 8      # allow up to 8 parallel workers
+    python scripts/dispatch_slice.py --shards 20     # ceiling: 20 workers in one run
     python scripts/dispatch_slice.py --status        # show the decision, dispatch nothing
     python scripts/dispatch_slice.py --force --workers 1   # ignore due/budget (debug)
 
@@ -86,22 +87,60 @@ def mark_dispatched(slot: str) -> None:
         json.dump(state, fh)
 
 
-def dispatch(slot: str, pages: str, fast: str, profile: str) -> bool:
+def dispatch(slots: list[str], pages: str, fast: str, profile: str) -> bool:
+    """One run, N shards.
+
+    A matrix job starts N separate GitHub runners — separate IPs, separate
+    Chrome profiles, separate concurrency groups — from a single dispatch call.
+    That is why extra repositories are not needed: the same N parallel workers
+    come out of one repository, and the Postgres queue already keeps them from
+    colliding.
+    """
     out = api(f"/repos/{OWNER}/{REPO}/actions/workflows/{WORKFLOW}/dispatches", "POST", {
         "ref": "main",
-        "inputs": {"pages": pages, "fast": fast, "profile": profile, "worker": slot},
+        "inputs": {
+            "pages": pages, "fast": fast, "profile": profile,
+            "shards": json.dumps(slots), "max_parallel": str(len(slots)),
+        },
     })
     if out.get("error") or out.get("message"):
-        print(f"[dispatch] {slot} FAILED: {out}")
+        print(f"[dispatch] {len(slots)} shard(s) FAILED: {out}")
         return False
-    mark_dispatched(slot)
-    print(f"[dispatch] {slot} sent (pages={pages}, fast={fast}, profile={profile})")
+    for slot in slots:
+        mark_dispatched(slot)
+    print(f"[dispatch] sent {len(slots)} shard(s): {', '.join(slots)} "
+          f"(pages={pages}, fast={fast}, profile={profile})")
     return True
+
+
+def block_rate(limit: int = 12) -> float:
+    """Share of the last N slices that were blocked, aborted or challenged.
+
+    The pool is only allowed to grow while Etsy is answering cleanly. A dispatcher
+    that keeps opening new sessions after a wave of challenges is how an IP range
+    gets flagged, so this number caps the shard count instead of ignoring it.
+    """
+    try:
+        from crawler.supa import Supa
+        rows = Supa()._call("GET", f"/rest/v1/runs?select=status,challenges"
+                                   f"&order=started_at.desc&limit={limit}") or []
+    except Exception:                                    # noqa: BLE001
+        return 0.0                                       # unknown: do not throttle on a guess
+    if not rows:
+        return 0.0
+    # A single challenge is normal — every clean run solves one slider and
+    # carries on (challenges=1 on a succeeded slice). Only a run that gave up, or
+    # one that needed several solves, counts against the pool.
+    bad = sum(1 for r in rows
+              if r.get("status") in ("aborted", "failed", "blocked")
+              or int(r.get("challenges") or 0) >= 3)
+    return bad / len(rows)
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--workers", type=int, default=3, help="max parallel slots (default 3)")
+    ap.add_argument("--shards", "--workers", dest="shards", type=int, default=3,
+                    help="max parallel workers in one run (default 3, ceiling 20)")
     ap.add_argument("--pages", default="2")
     ap.add_argument("--fast", default="false")
     ap.add_argument("--profile", default="warm")
@@ -124,17 +163,26 @@ def main() -> int:
     live = [w for w in (h.get("busy_workers") or []) if w]
     pages = int(args.pages)
     capacity = left // max(1, pages)                     # slices the budget still allows
-    slots = [f"w{i}" for i in range(1, max(1, args.workers) + 1)]
+    ceiling = max(1, min(20, int(args.shards)))
+    slots = [f"w{i}" for i in range(1, ceiling + 1)]
     state = recently_dispatched()
     now = int(time.time())
     free = [s for s in slots
             if s not in live and now - int(state.get(s, 0)) > DISPATCH_COOLDOWN]
 
+    # Ramp guard: halve the pool while Etsy is serving challenges.
+    rate = block_rate()
+    if rate > 0.25:
+        capped = max(1, ceiling // 2)
+        print(f"[dispatch] block rate {rate:.0%} over the last slices — capping shards "
+              f"at {capped} (asked {ceiling})")
+        free = free[:capped]
+
     want = min(len(free), due, capacity)
 
     print(f"[dispatch] budget {h.get('used')}/{h.get('budget')} "
           f"(left {left}, {capacity} slices) · due {due} keywords · "
-          f"live {live or 'none'} · slots {slots}")
+          f"live {live or 'none'} · slots {slots} · blocked {rate:.0%}")
 
     if args.force:
         want = 1
@@ -151,15 +199,10 @@ def main() -> int:
         return 0
 
     if args.status:
-        print(f"[dispatch] would dispatch {want} slot(s): {free[:want]}")
+        print(f"[dispatch] would run {want} shard(s): {free[:want]}")
         return 0
 
-    ok = 0
-    for slot in free[:want]:
-        if dispatch(slot, args.pages, args.fast, args.profile):
-            ok += 1
-    print(f"[dispatch] {ok}/{want} dispatched")
-    return 0 if ok == want else 1
+    return 0 if dispatch(free[:want], args.pages, args.fast, args.profile) else 1
 
 
 if __name__ == "__main__":
