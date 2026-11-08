@@ -185,6 +185,15 @@ def main() -> int:
             supa.finish_slice(kw, pf)
             return 1
 
+    # Refresh the niche mapping once per crawl, not per page load: the regex match
+    # over 2,600 titles is far too slow to run inside an HTTP request.
+    if rows:
+        try:
+            out = supa._call("POST", "/rest/v1/rpc/refresh_design_views", {})
+            log(f"[design] niche mapping refreshed: {out}")
+        except Exception as e:                              # noqa: BLE001
+            log(f"[design] refresh skipped: {type(e).__name__}: {e}")
+
     # Advance only on a clean slice: a blocked page must be retried, not skipped,
     # or the pass silently develops holes.
     next_page = pf if blocked else pt + 1
