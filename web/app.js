@@ -290,7 +290,7 @@ async function submitGate(ev) {
 function startBoard() {
   const board = [
     ['listings', loadListings], ['stats', loadStats], ['queue', loadQueue], ['usage', loadUsage],
-    ['market', loadMarket], ['signals', loadSignals],
+    ['market', loadMarket], ['signals', loadSignals], ['briefs', loadBriefs], ['briefs', loadBriefs],
   ];
   board.forEach(([name, fn]) => {
     fn().then(hideBanner).catch((e) => showBanner(`${name} failed to load: ${e.message} (build ${BUILD})`));
@@ -936,7 +936,7 @@ async function loadMarket() {
  * listings.is_ad. No extra page loads — which matters, because a page load is
  * the one thing here that costs a captcha.
  */
-const SIG = { kw: '', entry: [], cohorts: [], curve: [], winners: [], phrases: [] };
+const SIG = { kw: '', entry: [], cohorts: [], curve: [], winners: [], phrases: [], observed: {}, moverSource: 'age' };
 
 const COHORTS = ['0-7d', '8-30d', '31-90d', '90d+'];
 const COHORT_LABEL = { '0-7d': '0–7 days', '8-30d': '8–30 days', '31-90d': '31–90 days', '90d+': '90+ days' };
@@ -966,6 +966,7 @@ async function loadSignals() {
   sel.innerHTML = SIG.entry.map((e) => `<option value="${esc(e.keyword)}">${esc(e.keyword)}</option>`).join('');
   sel.value = SIG.kw;
   renderSignals();
+  loadObservedMovers(SIG.kw).then(renderSignals).catch(() => {});
 }
 
 function renderSignals() {
@@ -999,9 +1000,12 @@ function renderSignals() {
 
   /* 3. launch curve — bars scaled to the peak week */
   const curve = SIG.curve.filter((r) => r.keyword === kw).slice(-14);
-  const peak = Math.max(1, ...curve.map((r) => Number(r.median_fav_per_day) || 0));
+  // One viral week (thousands of favourites a day) would flatten every other bar
+  // to a line, so the scale ignores the single highest week and clips it instead.
+  const vals = curve.map((r) => Number(r.median_fav_per_day) || 0).sort((a, b) => a - b);
+  const peak = Math.max(1, vals.length > 2 ? vals[vals.length - 2] : (vals[vals.length - 1] || 1));
   $('curve-body').innerHTML = curve.length ? curve.map((r) => {
-    const h = Math.max(2, Math.round(((Number(r.median_fav_per_day) || 0) / peak) * 100));
+    const h = Math.min(100, Math.max(2, Math.round(((Number(r.median_fav_per_day) || 0) / peak) * 100)));
     const label = new Date(r.week).toLocaleDateString([], { month: 'short', day: 'numeric' });
     return `<div class="curve-col" title="${label} · ${perDay(r.median_fav_per_day)} favourites/day · ${r.listings} listings">
       <b class="curve-val">${perDay(r.median_fav_per_day)}</b>
@@ -1010,23 +1014,36 @@ function renderSignals() {
     </div>`;
   }).join('') : '<p class="tiny">Not enough dated listings yet.</p>';
 
-  /* 4. fastest movers */
-  const movers = SIG.winners.filter((w) => w.keyword === kw).slice(0, 8);
-  $('movers-body').innerHTML = movers.length ? movers.map((w, i) => `<li class="mover">
+  /* 4. fastest movers — published-date ranking when we have dates, otherwise the
+   *    honest fallback: favourites gained per day since we started reading the
+   *    listing. The two are labelled differently on purpose; they are not the
+   *    same measurement and must never look like it. */
+  const byAge = SIG.winners.filter((w) => w.keyword === kw).slice(0, 8);
+  const obs = SIG.observed[kw] || [];
+  const moverRows = byAge.length ? byAge.map((w) => ({
+    etsy_id: w.etsy_id, title: w.title, shop: w.shop_name, price: w.price_usd,
+    favourites: w.favorites, rank: w.best_rank, rate: w.fav_per_day,
+    note: w.age_days == null ? 'age unknown' : `${num(w.age_days)} days old`, exact: true,
+  })) : obs.slice(0, 8).map((o) => ({
+    etsy_id: o.etsy_id, title: o.title, shop: o.shop_name, price: o.price_usd,
+    favourites: o.favorites, rank: o.best_rank, rate: o.fav_per_day_observed,
+    note: `watched ${Number(o.tracked_days || 0).toFixed(1)} days`, exact: false,
+  }));
+  $('movers-body').innerHTML = moverRows.length ? moverRows.map((w, i) => `<li class="mover">
       <span class="rank">${i + 1}</span>
       <div class="mover-main">
         <a href="https://www.etsy.com/listing/${esc(w.etsy_id)}" target="_blank" rel="noopener">${esc(w.title || '(no title)')}</a>
         <div class="mover-meta">
-          ${w.shop_name ? `<span>${esc(w.shop_name)}</span>` : ''}
-          <span>${w.age_days == null ? 'age unknown' : `${num(w.age_days)} days old`}</span>
-          <span>rank ${w.best_rank ?? '—'}</span>
-          <span>${money(w.price_usd)}</span>
-          <span>${num(w.favorites)} favourites</span>
+          ${w.shop ? `<span>${esc(w.shop)}</span>` : ''}
+          <span>${esc(w.note)}</span>
+          <span>rank ${w.rank ?? '—'}</span>
+          <span>${money(w.price)}</span>
+          <span>${num(w.favourites)} favourites</span>
         </div>
       </div>
-      <div class="mover-rate"><b>${perDay(w.fav_per_day)}</b><span>fav / day</span></div>
+      <div class="mover-rate"><b>${perDay(w.rate)}</b><span>${w.exact ? 'fav / day' : 'fav / day watched'}</span></div>
     </li>`).join('')
-    : '<li class="tiny">No dated listings for this keyword yet.</li>';
+    : '<li class="tiny">Nothing measured for this keyword yet.</li>';
 
   /* 5. title phrases */
   const phrases = SIG.phrases.filter((p) => p.keyword === kw && Number(p.listings) >= 3).slice(0, 14);
@@ -1041,7 +1058,137 @@ function renderSignals() {
     : '<tr><td colspan="6" class="tiny">No phrase data yet.</td></tr>';
 }
 
-on('sig-kw', 'change', () => { SIG.kw = $('sig-kw').value; renderSignals(); });
+async function loadObservedMovers(kw) {
+  if (!kw || SIG.observed[kw]) return;
+  try {
+    const links = await rest(`listing_keywords?select=etsy_id&keyword=eq.${encodeURIComponent(kw)}&limit=300`);
+    const ids = (links.data || []).map((r) => r.etsy_id).filter(Boolean);
+    if (!ids.length) { SIG.observed[kw] = []; return; }
+    const q = ids.map((i) => `"${i}"`).join(',');
+    const stats = await rest('listing_stats?select=etsy_id,title,shop_name,price_usd,favorites,best_rank,fav_per_day_observed,tracked_days'
+      + `&etsy_id=in.(${encodeURIComponent(q)})&fav_per_day_observed=not.is.null`
+      + '&order=fav_per_day_observed.desc&limit=60');
+    SIG.observed[kw] = stats.data || [];
+  } catch (e) {
+    SIG.observed[kw] = [];      // the panel degrades to the age-based list
+  }
+}
+
+on('sig-kw', 'change', async () => {
+  SIG.kw = $('sig-kw').value;
+  renderSignals();               // instant: age-based or empty
+  await loadObservedMovers(SIG.kw);
+  renderSignals();               // then the observed fallback, if it adds anything
+});
+
+/* ── design briefs ─────────────────────────────────────────────────────
+ * The reverse-engineering half of the board: group the shirts that are
+ * already selling into niches, score demand against saturation, and put the
+ * winning designs on screen so the next design decision is visual, not
+ * statistical.
+ */
+const BRIEFS = { kw: 'tshirt', rows: [], examples: [], production: [], niche: '' };
+
+async function loadBriefs() {
+  const [briefs, examples, production] = await Promise.all([
+    rest('design_briefs?select=*&order=opportunity.desc'),
+    rest('niche_examples?select=*&limit=900'),
+    rest('production_stats?select=*&order=listings.desc'),
+  ]);
+  BRIEFS.rows = briefs.data || [];
+  BRIEFS.examples = examples.data || [];
+  BRIEFS.production = production.data || [];
+  const kws = [...new Set(BRIEFS.rows.map((r) => r.keyword))];
+  if (!kws.length) {
+    $('brief-body').innerHTML = '<tr><td colspan="8" class="tiny">No niche data yet.</td></tr>';
+    return;
+  }
+  if (!kws.includes(BRIEFS.kw)) BRIEFS.kw = kws[0];
+  $('db-kw').innerHTML = kws.map((k) => `<option value="${esc(k)}">${esc(k)}</option>`).join('');
+  $('db-kw').value = BRIEFS.kw;
+  renderBriefs();
+}
+
+function briefRow(r) {
+  const score = Math.max(0, Math.min(100, Math.round(Number(r.opportunity) || 0)));
+  const tone = score >= 60 ? ' high' : score <= 30 ? ' low' : '';
+  const sel = r.niche === BRIEFS.niche;
+  return `<tr class="${sel ? 'focus-row' : ''}" data-niche="${esc(r.niche)}" tabindex="0">
+    <td data-label="Niche"><b>${esc(r.label || r.niche)}</b>${r.note ? ` <span class="tag quiet">${esc(r.note)}</span>` : ''}</td>
+    <td data-label="Opportunity"><span class="score${tone}"><i><b style="width:${score}%"></b></i><span class="pct">${score}</span></span></td>
+    <td data-label="Listings">${num(r.listings)}</td>
+    <td data-label="Median favourites">${num(r.median_fav)}</td>
+    <td data-label="Top 10%">${num(r.p90_fav)}</td>
+    <td data-label="Median price">${money(r.median_price)}</td>
+    <td data-label="Shops">${num(r.shops)}</td>
+    <td data-label="New (90 d)">${r.pct_new == null ? '—' : `${Math.round(Number(r.pct_new))}%`}</td>
+  </tr>`;
+}
+
+/* Etsy serves the original (2000 px) by default; the grid only needs a small one.
+ * The CDN accepts a resize segment in place of il_fullxfull, so ask for 570 px
+ * instead of downloading 2 MB of pixels per card. */
+const thumb = (url) => String(url || '').replace(/\/il_[^/.]+\./, '/il_570xN.');
+
+function designCard(e, i) {
+  const fav = Number(e.favorites) || 0;
+  return `<a class="design-card" href="https://www.etsy.com/listing/${esc(e.etsy_id)}" target="_blank" rel="noopener">
+    <span class="design-img"><img loading="lazy" src="${esc(thumb(e.image_url))}" alt=""></span>
+    <span class="design-meta">
+      <b>${num(fav)}</b><span>fav</span>
+      <span class="sep">·</span>
+      <span>${money(e.price_usd)}</span>
+      <span class="sep">·</span>
+      <span>#${i + 1}</span>
+    </span>
+    <span class="design-title">${esc(e.title || '')}</span>
+  </a>`;
+}
+
+function renderBriefs() {
+  const rows = BRIEFS.rows.filter((r) => r.keyword === BRIEFS.kw);
+  if (!rows.some((r) => r.niche === BRIEFS.niche)) BRIEFS.niche = rows[0]?.niche || '';
+  $('brief-body').innerHTML = rows.length
+    ? rows.map(briefRow).join('')
+    : '<tr><td colspan="8" class="tiny">No niche crossed the 8-listing floor for this keyword.</td></tr>';
+
+  const label = (rows.find((r) => r.niche === BRIEFS.niche) || {}).label || BRIEFS.niche;
+  const head = $('designs-head');
+  if (head) head.textContent = `Designs in “${label || 'this niche'}”`;
+
+  const ex = BRIEFS.examples.filter((e) => e.keyword === BRIEFS.kw && e.niche === BRIEFS.niche).slice(0, 6);
+  $('design-grid').innerHTML = ex.length
+    ? ex.map(designCard).join('')
+    : '<p class="tiny">No thumbnails stored for this niche yet.</p>';
+
+  const prod = BRIEFS.production.filter((p) => p.keyword === BRIEFS.kw);
+  $('production-body').innerHTML = prod.length
+    ? prod.map((p) => `<tr>
+        <td data-label="Blank / method"><b>${esc(p.label)}</b></td>
+        <td data-label="Share of shirts">${shareBar((Number(p.pct_of_shirts) || 0) / 100)}</td>
+        <td data-label="Median favourites">${num(p.median_fav)}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="3" class="tiny">No descriptions captured for this keyword yet.</td></tr>';
+}
+
+on('db-kw', 'change', () => { BRIEFS.kw = $('db-kw').value; BRIEFS.niche = ''; renderBriefs(); });
+
+/* Row click selects that niche. Delegated, because the rows are re-rendered. */
+on('brief-body', 'click', (ev) => {
+  const tr = ev.target.closest('tr[data-niche]');
+  if (!tr) return;
+  BRIEFS.niche = tr.getAttribute('data-niche');
+  renderBriefs();
+  $('designs-head')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+});
+on('brief-body', 'keydown', (ev) => {
+  if (ev.key !== 'Enter' && ev.key !== ' ') return;
+  const tr = ev.target.closest('tr[data-niche]');
+  if (!tr) return;
+  ev.preventDefault();
+  BRIEFS.niche = tr.getAttribute('data-niche');
+  renderBriefs();
+});
 
 /* ── runs ────────────────────────────────────────────────────────────── */
 async function loadRuns() {
