@@ -290,7 +290,7 @@ async function submitGate(ev) {
 function startBoard() {
   const board = [
     ['listings', loadListings], ['stats', loadStats], ['queue', loadQueue], ['usage', loadUsage],
-    ['market', loadMarket], ['signals', loadSignals], ['briefs', loadBriefs], ['briefs', loadBriefs],
+    ['market', loadMarket], ['signals', loadSignals], ['briefs', loadBriefs], ['library', loadLibrary],
   ];
   board.forEach(([name, fn]) => {
     fn().then(hideBanner).catch((e) => showBanner(`${name} failed to load: ${e.message} (build ${BUILD})`));
@@ -1087,6 +1087,143 @@ on('sig-kw', 'change', async () => {
  * winning designs on screen so the next design decision is visual, not
  * statistical.
  */
+/* ── design library ────────────────────────────────────────────────────────
+ * Filled by scripts/design_dna.py: OCR of the artwork gives the phrase, pixel
+ * statistics give composition, background and palette. Nothing here is inferred
+ * by the browser — it renders what the DNA pass measured, and says "not read"
+ * where the pass found nothing rather than filling the gap. */
+const LIB = { rows: [], patterns: [], kw: 'tshirt', niche: 'all', bg: 'all', only: 'all' };
+
+async function loadLibrary() {
+  const [lib, pat] = await Promise.all([
+    rest('design_library?select=*&order=demand.desc&limit=600'),
+    rest('design_patterns?select=*&order=listings.desc&limit=80'),
+  ]);
+  LIB.rows = lib.data || [];
+  LIB.patterns = pat.data || [];
+
+  const kws = [...new Set(LIB.rows.map((r) => r.keyword).filter(Boolean))];
+  if (!kws.length) {
+    $('lib-count').textContent = 'No design has been read yet — the DNA pass has not run.';
+    return;
+  }
+  if (!LIB.wired) {
+    LIB.wired = true;
+    const bind = (id, key) => $(id).addEventListener('change', (e) => { LIB[key] = e.target.value; renderLibrary(); });
+    bind('lib-kw', 'kw'); bind('lib-niche', 'niche'); bind('lib-bg', 'bg'); bind('lib-only', 'only');
+    $('lib-csv').addEventListener('click', libCsv);
+  }
+  if (!kws.includes(LIB.kw)) LIB.kw = kws.includes('tshirt') ? 'tshirt' : kws[0];
+  $('lib-kw').innerHTML = kws.map((k) => `<option value="${esc(k)}">${esc(k)}</option>`).join('');
+  $('lib-kw').value = LIB.kw;
+  renderLibrary();
+}
+
+function libRows() {
+  let rows = LIB.rows.filter((r) => r.keyword === LIB.kw);
+  if (LIB.niche !== 'all') rows = rows.filter((r) => r.niche === LIB.niche);
+  if (LIB.bg !== 'all') rows = rows.filter((r) => r.design_bg === LIB.bg);
+  if (LIB.only === 'text') rows = rows.filter((r) => r.design_text);
+  if (LIB.only === 'proven') rows = rows.filter((r) => r.is_bestseller || r.is_star_seller);
+  // A design you can read is worth more than one you cannot: rank legible phrases
+  // first, then demand. Reading a wall of unreadable mockups is how research dies.
+  return rows.slice().sort((a, b) =>
+    (Boolean(b.design_text) - Boolean(a.design_text)) || (Number(b.demand) - Number(a.demand)));
+}
+
+function libCard(r, i) {
+  const phrase = r.design_text
+    ? `<span class="lib-phrase">${esc(r.design_text)}</span>`
+    : '<span class="lib-phrase quiet">no readable text</span>';
+  const colours = (r.design_colours || []).slice(0, 3)
+    .map((c) => `<i class="swatch" style="background:${esc(c)}" title="${esc(c)}"></i>`).join('');
+  const badges = [
+    r.is_bestseller ? '<span class="chip hot">bestseller</span>' : '',
+    r.is_star_seller ? '<span class="chip">star</span>' : '',
+    r.bought_24h ? `<span class="chip hot">${num(r.bought_24h)} bought / 24h</span>` : '',
+    r.carts ? `<span class="chip">${num(r.carts)} in carts</span>` : '',
+  ].join('');
+  return `<a class="lib-card" href="https://www.etsy.com/listing/${esc(r.etsy_id)}" target="_blank" rel="noopener">
+    <span class="lib-img"><img loading="lazy" src="${esc(thumb(r.image_url))}" alt="">
+      <span class="lib-rank">${i + 1}</span></span>
+    <span class="lib-body">
+      ${phrase}
+      <span class="lib-title">${esc(r.title || '')}</span>
+      <span class="lib-meta">
+        <span class="lib-demand"><b>${num(r.demand)}</b> demand</span>
+        <span>${num(r.favorites)} fav</span>
+        <span>${money(r.price_usd)}</span>
+      </span>
+      <span class="lib-tags">
+        ${r.niche ? `<span class="chip">${esc(r.niche)}</span>` : ''}
+        ${r.design_layout ? `<span class="chip quiet">${esc(String(r.design_layout).replace('_', '+'))}</span>` : ''}
+        ${r.design_bg ? `<span class="chip quiet">${esc(r.design_bg)}</span>` : ''}
+        <span class="lib-colours">${colours}</span>
+      </span>
+      <span class="lib-badges">${badges}</span>
+    </span>
+  </a>`;
+}
+
+function renderLibrary() {
+  const rows = libRows();
+
+  const niches = [...new Set(LIB.rows.filter((r) => r.keyword === LIB.kw).map((r) => r.niche).filter(Boolean))].sort();
+  const cur = niches.includes(LIB.niche) ? LIB.niche : 'all';
+  LIB.niche = cur;
+  $('lib-niche').innerHTML = `<option value="all">Any niche (${LIB.rows.filter((r) => r.keyword === LIB.kw).length})</option>`
+    + niches.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  $('lib-niche').value = cur;
+
+  const read = LIB.rows.filter((r) => r.keyword === LIB.kw);
+  const withText = read.filter((r) => r.design_text).length;
+  $('lib-count').textContent = `${num(rows.length)} designs shown · ${num(read.length)} read for `
+    + `“${LIB.kw}” · ${withText} with a legible phrase (${Math.round(100 * withText / Math.max(1, read.length))}%)`;
+
+  const shown = rows.slice(0, 120);
+  $('lib-grid').innerHTML = shown.length
+    ? shown.map(libCard).join('')
+    : '<p class="tiny">Nothing matches these filters yet.</p>';
+  if (rows.length > shown.length) {
+    $('lib-count').textContent += ` · showing the top ${shown.length} by demand`;
+  }
+
+  const pats = LIB.patterns.slice(0, 40);
+  $('pat-body').innerHTML = pats.length
+    ? pats.map((p) => `<tr>
+        <td data-label="Phrase"><b>${esc(p.phrase_norm)}</b></td>
+        <td data-label="Shirts">${num(p.listings)}</td>
+        <td data-label="Shops">${num(p.shops)}</td>
+        <td data-label="Demand">${num(p.demand_sum)}</td>
+        <td data-label="Niches">${esc((p.niches || []).join(', ') || '—')}</td>
+        <td data-label="Median price">${money(p.price_median)}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="6" class="tiny">No phrase has appeared on two read designs yet — the DNA pass is still filling.</td></tr>';
+}
+
+/* CSV straight from the browser: the library is the deliverable, so it must be
+ * liftable into a spreadsheet without going back through me. */
+function libCsv() {
+  const rows = libRows();
+  const cols = ['etsy_id', 'title', 'shop_name', 'niche', 'demand', 'favorites', 'carts',
+                'bought_24h', 'price_usd', 'design_text', 'phrase_norm', 'design_layout',
+                'design_bg', 'design_colours', 'age_days', 'is_bestseller', 'is_star_seller', 'image_url'];
+  const cell = (v) => {
+    if (v == null) return '';
+    const s = Array.isArray(v) ? v.join(' ') : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const csv = [cols.join(',')].concat(rows.map((r) => cols.map((c) => cell(r[c])).join(','))).join('\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `designs-${LIB.kw.replace(/\s+/g, '-')}-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
 const BRIEFS = { kw: 'tshirt', rows: [], examples: [], production: [], niche: '' };
 
 async function loadBriefs() {
