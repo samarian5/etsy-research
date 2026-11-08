@@ -81,6 +81,26 @@ class Supa:
                           {"p_pages": pages} if pages else {})
         return rows[0] if rows else None
 
+    def claim_enrich(self, n: int = 8) -> list[dict]:
+        """Listings with no publish date yet, most-favourited first.
+
+        The search cards carry no date, so a card-only crawl leaves
+        `listing_date` empty and every age statistic blind. Detail loads are the
+        scarce resource, so they go to the listings that matter most.
+        """
+        rows = self._call("POST", "/rest/v1/rpc/claim_enrich", {"p_limit": max(1, int(n))})
+        return rows or []
+
+    def merge_detail(self, row: dict) -> None:
+        """Write one detail page's fields over an existing listing row.
+
+        `ingest_batch` is built around a crawl row (run, page, position); an
+        enrichment page has none of those, so it goes through the same table
+        with a narrow, coalescing patch instead.
+        """
+        self._call("POST", "/rest/v1/listings?on_conflict=etsy_id",
+                   [row], prefer="resolution=merge-duplicates")
+
     def queue_health(self) -> dict:
         """Load-balancer snapshot: budget left, keywords due, live workers.
 
