@@ -443,6 +443,26 @@ def extract_detail(html: str, soup, url: str) -> dict:
             out["variation_count"] = sum(len(s.find_all("option")) for s in vsel)
             ex["dom"] = True
 
+        # Gallery fallback. The JSON-LD Product node is not always first on the page
+        # (a BreadcrumbList or an ItemList can take slot 0), and then `image` is not
+        # a Product gallery at all — which is why 141 freshly crawled listings came
+        # back with an image_count but no gallery. Every Etsy listing image shares
+        # one CDN shape, so the page source itself is the reliable index: collect the
+        # distinct image ids, keep the order they appear in, cap at 10.
+        if not out["gallery"]:
+            seen, urls = set(), []
+            for m in re.finditer(r"https://i\.etsystatic\.com/[^\s\"'\\]+?/il_[a-z0-9]+\.(\d+)_[a-z0-9]+\.(?:jpg|jpeg|png|webp)",
+                                 html or ""):
+                url, img_id = m.group(0), m.group(1)
+                if img_id in seen:
+                    continue
+                seen.add(img_id)
+                urls.append(url)
+                if len(urls) >= 10:
+                    break
+            if urls:
+                out["gallery"] = urls
+
         # Thumbnail fallback: OpenGraph image is always present on listing pages.
         if not out["thumbnail_url"]:
             og = soup.find("meta", attrs={"property": "og:image"})
