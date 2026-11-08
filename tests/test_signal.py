@@ -62,6 +62,20 @@ class DetailSignalTests(unittest.TestCase):
     def test_listing_date_is_parsed(self):
         self.assertEqual(self.detail["listing_date"], "2026-11-03")
 
+    def test_listing_date_survives_the_awkward_page_variants(self):
+        """The date block is missing from a third of pages; when it is present
+        Etsy wraps the day in non-breaking spaces or writes "Re-listed on"."""
+        cases = {
+            "Listed on Nov\u00a03, 2026": "2026-11-03",
+            "Re-listed on Nov 3, 2026": "2026-11-03",
+            "Listed on 3 November 2026": "2026-11-03",
+            "listed on october 31, 2026": "2026-10-31",
+        }
+        for text, want in cases.items():
+            st = BeautifulSoup(f"<html><body><p>{text}</p></body></html>", "html.parser")
+            got = extract_detail("<html></html>", st, "https://www.etsy.com/listing/1/")["listing_date"]
+            self.assertEqual(got, want, text)
+
     def test_listing_and_shop_review_counts_are_different_numbers(self):
         # JSON-LD aggregateRating = this listing's reviews ("2.3k reviews" in the shop card);
         # the embedded state carries the shop's lifetime count. Conflating them would
