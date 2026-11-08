@@ -36,6 +36,10 @@ on:
         description: "how many of those shards may run at once (ramp control)"
         required: false
         default: "3"
+      enrich:
+        description: "detail pages per slice spent backfilling publish dates (0 = off)"
+        required: false
+        default: "8"
 
 permissions:
   contents: read
@@ -92,6 +96,7 @@ jobs:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       PAGES_PER_RUN: ${{ inputs.pages || '2' }}
+      ENRICH_PER_RUN: ${{ inputs.enrich || '8' }}
       # Logs of a public repo are world-readable; keep the keyword list out of them.
       REDACT_KEYWORDS: "1"
       FAST: ${{ inputs.fast || 'false' }}
