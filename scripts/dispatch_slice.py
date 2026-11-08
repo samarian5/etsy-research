@@ -156,7 +156,7 @@ def main() -> int:
         print(f"[dispatch] queue check failed ({type(e).__name__}) — dispatching w1 anyway")
         if args.status:
             return 0
-        return 0 if dispatch("w1", args.pages, args.fast, args.profile) else 1
+        return 0 if dispatch(["w1"], args.pages, args.fast, args.profile) else 1
 
     left = int(h.get("left") or 0)
     due = int(h.get("due_keywords") or 0)
