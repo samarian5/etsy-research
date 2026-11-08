@@ -49,7 +49,7 @@ def keyword_label(keyword: str) -> str:
     return keyword or ""
 
 
-def crawl(slice_: dict, run_id: str) -> tuple[int, dict, list[dict]]:
+def crawl(slice_: dict, run_id: str, enrich: list[dict] | None = None) -> tuple[int, dict, list[dict]]:
     kw = slice_["keyword"]
     pf, pt = int(slice_["page_from"]), int(slice_["page_to"])
     depth = int(slice_["depth"])
@@ -63,6 +63,13 @@ def crawl(slice_: dict, run_id: str) -> tuple[int, dict, list[dict]]:
     browser = os.environ.get("BROWSER_BIN")
     if browser and Path(browser).exists():
         cmd += ["--browser-executable-path", browser]
+    if enrich:
+        # Handed to the crawler as a file, not a flag: the string form of 60 URLs
+        # would blow past the command-line limit eventually.
+        path = ROOT / "out" / "enrich.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(enrich))
+        cmd += ["--enrich-file", str(path)]
 
     log(f"[slice] {keyword_label(kw)} pages {pf}-{pt} of {depth} (run {run_id})")
     rc = subprocess.call(cmd, cwd=str(ROOT))
@@ -133,8 +140,17 @@ def main() -> int:
     log(f"[worker] slot {worker}")
     supa.start_run(run_id, kw, pf, pt, egress_ip=ip, gha_url=gha_url, worker=worker)
 
+    enrich: list[dict] = []
+    enrich_n = int(os.environ.get("ENRICH_PER_RUN") or "0")
+    if enrich_n:
+        try:
+            enrich = supa.claim_enrich(enrich_n)
+            log(f"[enrich] claimed {len(enrich)} listing(s) with no publish date yet")
+        except Exception as e:                              # noqa: BLE001
+            log(f"[enrich] claim failed: {type(e).__name__}: {e}")
+
     try:
-        rc, meta, rows = crawl(slice_, run_id)
+        rc, meta, rows = crawl(slice_, run_id, enrich)
     except Exception as e:  # a crash before rows exist still has to close the run
         log(f"[fatal] {type(e).__name__}: {e}")
         supa.finish_run(run_id, "failed", note=f"{type(e).__name__}: {e}"[:400])
