@@ -458,12 +458,22 @@ def extract_detail(html: str, soup, url: str) -> dict:
     # "Listed on Nov 3, 2026" — verified identical across three separate crawls of
     # the same listing, so it is the listing's date, not the page's render date.
     if soup and not out["listing_date"]:
-        m = re.search(r"listed on ([A-Z][a-z]{2} \d{1,2}, \d{4})", page_text, re.I)
+        # "Listed on Nov 3, 2026", "Re-listed on ...", and dozens of non-breaking
+        # spaces around the day number on some page variants: normalise first,
+        # then match, or the date silently disappears on ~40% of pages.
+        flat = (page_text or "").replace("\u00a0", " ").replace("\u2009", " ").replace("\u202f", " ")
+        flat = re.sub(r"\s+", " ", flat)
+        m = re.search(r"(?:re-)?listed on (?:([A-Z][a-z]{2,8}) (\d{1,2}),? (\d{4})|"
+                      r"(\d{1,2}) ([A-Z][a-z]{2,8}) (\d{4}))", flat, re.I)
         if m:
-            try:
-                out["listing_date"] = datetime.strptime(m.group(1), "%b %d, %Y").date().isoformat()
-            except ValueError:
-                pass
+            raw = (f"{m.group(1)} {m.group(2)}, {m.group(3)}" if m.group(1)
+                   else f"{m.group(5)} {m.group(4)}, {m.group(6)}")
+            for fmt in ("%b %d, %Y", "%B %d, %Y"):
+                try:
+                    out["listing_date"] = datetime.strptime(raw, fmt).date().isoformat()
+                    break
+                except ValueError:
+                    continue
 
     # Shop reviews as printed in the shop card: "(2.3k reviews)".
     if soup and out["shop_review_count"] is None:
@@ -982,8 +992,37 @@ class Crawl:
             self.delay()
 
     # -- detail -------------------------------------------------------------
+    def enrich_cards(self) -> list[dict]:
+        """Listings queued by the database because they still have no publish date.
+
+        They are ordinary detail visits, so they go through the same loop, the
+        same parser and the same payload files — only the card they arrive on is
+        synthetic (there is no search page behind them any more).
+        """
+        path = getattr(self.args, "enrich_file", None)
+        if not path:
+            return []
+        try:
+            rows = _json.loads(Path(path).read_text())
+        except Exception as e:
+            print(f"[crawl] could not read the enrichment queue: {e}", flush=True)
+            return []
+        cards, seen = [], set()
+        for r in rows:
+            lid = str(r.get("listing_id") or r.get("etsy_id") or "").strip()
+            url = r.get("url") or (f"https://www.etsy.com/listing/{lid}/" if lid else None)
+            if not lid or not url or lid in self.seen or lid in seen:
+                continue
+            seen.add(lid)
+            cards.append({"listing_id": lid, "url": url, "page": self.args.pages_from,
+                          "position": 0, "title": None, "is_ad": False})
+        return cards
+
     def details(self, sb):
-        items = [c for c in self.seen.values() if not c.get("carried")]
+        backfill = self.enrich_cards()
+        if backfill:
+            print(f"[crawl] backfilling {len(backfill)} undated listing(s) first", flush=True)
+        items = backfill + [c for c in self.seen.values() if not c.get("carried")]
         print(f"[crawl] visiting {len(items)} unique listings "
               f"({len(self.seen) - len(items)} carried from earlier chunks)", flush=True)
         for i, card in enumerate(items, 1):
@@ -1192,6 +1231,10 @@ def main() -> int:
                    help="keep HTML of the first N result pages for selector debugging")
     p.add_argument("--save-detail-html", type=int, default=3,
                    help="keep full HTML of the first N listing pages for selector debugging")
+    p.add_argument("--enrich-file", default=None,
+                   help="JSON list of {listing_id,url} pages to visit *before* this slice's own "
+                        "listings — used to backfill publish dates on listings we only ever saw "
+                        "as search cards")
     p.add_argument("--started-at", default=now())
     args = p.parse_args()
     if not args.pages_to:
@@ -1200,6 +1243,12 @@ def main() -> int:
     if not args.max_requests:
         # one search page + up to 60 detail visits per page in the slice
         args.max_requests = (args.pages_to - args.pages_from + 1) * 65 + 40
+        # backfill pages are one navigation each, on top of the slice
+        if args.enrich_file:
+            try:
+                args.max_requests += len(_json.loads(Path(args.enrich_file).read_text()))
+            except Exception:
+                pass
     return Crawl(args).run()
 
 
