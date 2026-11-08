@@ -768,3 +768,39 @@ table.data.compact td { padding: 9px 12px; font-size: var(--t-sm); }
   .curve { height: 132px; }
   .curve-week { font-size: 8.5px; }
 }
+
+/* ── design briefs ──────────────────────────────────────────────────────────
+   The one place on the board with pictures. A niche is judged by eye in one
+   screen: six winners, their favourites, their price. Everything else stays
+   numeric.
+   ──────────────────────────────────────────────────────────────────────────── */
+#brief-table tbody tr[data-niche] { cursor: pointer; }
+#brief-table tbody tr[data-niche]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.design-grid {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s-4); margin: var(--s-3) 0 var(--s-2);
+}
+.design-card {
+  display: flex; flex-direction: column; gap: 6px; min-width: 0;
+  text-decoration: none; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r); overflow: hidden; padding-bottom: 10px;
+  transition: border-color .12s ease, transform .12s ease;
+}
+.design-card:hover { border-color: var(--line-strong); transform: translateY(-1px); }
+.design-img { display: block; aspect-ratio: 4 / 5; background: var(--surface-2); overflow: hidden; }
+.design-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.design-meta {
+  display: flex; align-items: baseline; gap: 4px; padding: 0 10px;
+  font-size: var(--t-xs); color: var(--muted); font-variant-numeric: tabular-nums;
+}
+.design-meta b { font-size: var(--t-sm); color: var(--ink); font-weight: 650; }
+.design-meta .sep { color: var(--muted-2); }
+.design-title {
+  padding: 0 10px; font-size: var(--t-xs); line-height: 1.35; color: var(--ink-2);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+@media (max-width: 860px) { .design-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 360px) { .design-grid { grid-template-columns: 1fr; } }
