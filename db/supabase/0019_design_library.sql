@@ -49,8 +49,12 @@ create index if not exists listings_design_bg_idx
   on public.listings (design_bg) where design_bg is not null;
 
 -- ---------------------------------------------------------------- claim queue ---
-create or replace function public.claim_dna(p_limit int default 20, p_cool_minutes int default 30)
-returns table (etsy_id text, title text, gallery jsonb, favorites int, price_usd numeric)
+-- The OUT list grew when the DNA pass started reading covers as well as galleries;
+-- CREATE OR REPLACE cannot change a return type, so drop first.
+drop function if exists public.claim_dna(int, int);
+create function public.claim_dna(p_limit int default 20, p_cool_minutes int default 30)
+returns table (etsy_id text, title text, gallery jsonb, image_url text,
+               favorites int, price_usd numeric)
 language sql
 security definer
 set search_path = public
@@ -69,10 +73,12 @@ as $$
        set design_dna_at = now()
       from pick
      where l.etsy_id = pick.etsy_id
-    returning l.etsy_id, l.title, l.gallery, l.favorites, l.price_usd
+    returning l.etsy_id, l.title, l.gallery, l.image_url, l.favorites, l.price_usd
   )
   select * from claimed;
 $$;
+
+grant execute on function public.claim_dna(int, int) to authenticated;
 
 create or replace function public.dna_health()
 returns json language sql security definer set search_path = public as $$
