@@ -50,6 +50,7 @@ FILES = [
     "db/supabase/0016_age_guard.sql",
     "db/supabase/0017_design_briefs.sql",
     "db/supabase/0018_design_matview.sql",
+    "db/supabase/0019_design_library.sql",
     "docs/adr/0010-parallel-worker-pool.md",
     "README.md",
     "web/index.html",
