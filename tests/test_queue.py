@@ -83,11 +83,23 @@ class WorkerPoolShapeTests(unittest.TestCase):
         live_clause = sql.split("), live as (")[1].split(")")[0]
         self.assertIn("'running'", live_clause)
 
-    def test_the_dispatcher_sends_the_slot_it_chose(self):
+    def test_the_dispatcher_sends_the_shard_list_it_chose(self):
+        # One dispatch, N shards: the runner fans them out as a matrix. Sending a
+        # single "worker" input instead would silently collapse the pool back to
+        # one crawler per tick.
         src = (self.ROOT / "scripts/dispatch_slice.py").read_text()
-        self.assertIn('"worker": slot', src)
+        self.assertIn('"shards": json.dumps(slots)', src)
+        self.assertIn('"max_parallel"', src)
+        self.assertNotIn('"worker": slot', src)
         self.assertIn("queue_health", src)
         self.assertIn("DISPATCH_COOLDOWN", src)
+
+    def test_the_dispatcher_throttles_on_real_failures_not_on_one_challenge(self):
+        # Every clean slice solves one captcha (challenges=1) and still succeeds.
+        # Counting that as a block would pin the pool at one shard forever.
+        src = (self.ROOT / "scripts/dispatch_slice.py").read_text()
+        self.assertIn('>= 3', src)
+        self.assertIn('("aborted", "failed", "blocked")', src)
 
     def test_the_crawler_labels_its_run(self):
         src = (self.ROOT / "scripts/supa_run.py").read_text()
@@ -139,23 +151,41 @@ class WorkflowShapeTests(unittest.TestCase):
         self.assertNotIn("chrome", plan_steps.lower())
         self.assertNotIn("xvfb", plan_steps.lower())
 
-    def test_each_slot_has_its_own_concurrency_group(self):
-        """Parallelism comes from distinct group names, not from extra repos.
+    def test_each_shard_has_its_own_concurrency_group(self):
+        """Parallelism comes from the matrix, not from extra repositories.
 
-        One group per worker slot: w2 and w3 crawl at the same time, while the
-        same slot can never overlap itself. A single hard-coded group would
-        silently serialise the whole pool, which is exactly the bug this test
-        exists to catch.
+        The `slice` job expands `strategy.matrix.worker`; GitHub evaluates a
+        job-level `concurrency` per matrix instance, so each shard gets its own
+        group and can never overlap itself while other shards run beside it.
+        A single hard-coded group would silently serialise the whole pool.
         """
-        group = self.supa["concurrency"]["group"]
-        self.assertIn("inputs.worker", group)
+        job = self.supa["jobs"]["slice"]
+        self.assertIn("worker", job["strategy"]["matrix"])
+        self.assertIn("inputs.shards", job["strategy"]["matrix"]["worker"])
+        group = job["concurrency"]["group"]
+        self.assertIn("matrix.worker", group)
         self.assertTrue(group.startswith("etsy-crawl-"), group)
-        self.assertFalse(self.supa["concurrency"]["cancel-in-progress"])
+        self.assertFalse(job["concurrency"]["cancel-in-progress"])
+        # the ramping cap must be an input, or 20 shards would always launch at once
+        self.assertIn("max-parallel", job["strategy"])
+        # a shard must actually reach the crawler with its own identity
+        self.assertIn("matrix.worker", job["env"]["WORKER"])
+        self.assertIn("matrix.worker", job["env"]["PROFILE_DIR"])
         # the legacy SQLite crawler keeps its own, non-colliding group
         self.assertEqual(self.doc["concurrency"]["group"], "etsy-crawl-legacy")
         self.assertFalse(self.doc["concurrency"]["cancel-in-progress"])
-        # and the slot must actually reach the crawler
-        self.assertIn("inputs.worker", self.supa["jobs"]["slice"]["env"]["WORKER"])
+
+    def test_the_slice_gap_is_short_inside_a_lap(self):
+        """A finished slice must not push the keyword a whole interval away.
+
+        That was the limit on throughput: depth 60 on a 2 h interval is a 60 h lap
+        no matter how many workers exist. Migration 0013 shortens the gap while a
+        lap is still open, so the pool can actually stay busy.
+        """
+        sql = (pathlib.Path(__file__).resolve().parent.parent / "db/supabase/0013_slice_gap.sql").read_text()
+        self.assertIn("slice_gap_seconds", sql)
+        self.assertIn("make_interval(secs => gap)", sql)
+        self.assertIn("else make_interval(hours => k.interval_hours)", sql)
 
     def test_the_supabase_slice_writes_to_the_configured_project(self):
         env = self.supa["jobs"]["slice"]["env"]
