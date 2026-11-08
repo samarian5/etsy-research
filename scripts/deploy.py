@@ -51,6 +51,7 @@ FILES = [
     "db/supabase/0017_design_briefs.sql",
     "db/supabase/0018_design_matview.sql",
     "db/supabase/0019_design_library.sql",
+    "db/supabase/0020_ingest_gallery.sql",
     "docs/adr/0010-parallel-worker-pool.md",
     "README.md",
     "web/index.html",
