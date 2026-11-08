@@ -277,6 +277,59 @@ whole board to anyone holding the public anon key.
 says so in its header. `fav_per_day` is floored at one day so an eight-hour-old
 listing does not look like a rocket.
 
+## Design library — reading the artwork, not the marketing
+
+Design briefs answer *which niche*. The library answers *which idea*, and it does it
+by reading the shirt itself rather than the listing copy.
+
+```
+listing page ──► gallery (JSON-LD image[])  ──► CDN at il_570xN
+                    │
+                    └─► scripts/design_dna.py
+                          ├─ OCR  → the phrase on the shirt (headline by type size)
+                          ├─ pixels → text-only / text+graphic, solid / striped /
+                          │           gradient / photo, ink coverage, top 3 colours
+                          └─ PATCH → listings.design_* , phrase_norm
+                                        │
+                          design_library  ◄─┘        design_patterns (same phrase, 2+ shops)
+```
+
+**Demand, stated honestly.** Etsy publishes no sales. The library ranks on
+`favourites + 40 × "bought in the last 24 hours" + 15 × "in carts"` — Etsy's own
+urgency counters, which are the closest public evidence of velocity. EverBee's
+*estimated* revenue is not invented anywhere here.
+
+**Why the headline only.** OCR of a mockup returns the shop's badges too ("unlimited
+proofs!", "ships from USA"). Type size separates them: the phrase printed on the
+shirt is the largest text in the image, so the box height picks the headline and a
+junk-word filter drops the rest.
+
+**Why the background matters.** "Striped background, cut out in the middle, cursive
+text" is the kind of pattern that travels between niches — that is the point of
+recording `design_bg` and `design_layout` as data instead of adjectives.
+
+**Validated phrases.** `design_patterns` groups the library by `phrase_norm` and
+keeps only phrases found on two or more shirts from different shops. When five
+sellers independently ship the same five words, the idea is proven — reimagine it for
+another niche rather than inventing from scratch.
+
+**Running the DNA pass.** It is CPU-only and free, and it runs *outside* the crawl
+budget because CDN images are not challenge-protected:
+
+```bash
+.venv/bin/python scripts/design_dna.py --limit 200        # claim 200, read, write back
+.venv/bin/python scripts/design_dna.py --limit 20 --dry-run   # claims are leases
+```
+
+`claim_dna()` leases rows for 30 minutes, most-demanded first; a row keeps a lease
+until `design_layout` is written, so a killed run releases itself instead of losing
+the work.
+
+**Known limits.** Legacy rows carry only the cover image (a lifestyle mockup), so
+only ~39 % of them yield a legible phrase; rows crawled after `0019` store the full
+gallery and the pass tries up to three images, preferring flat artwork. Photos of
+people and mockups are therefore the main source of "no readable text".
+
 ## Design briefs — from "which market" to "what do I design next"
 
 The market tables answer *where* the demand is. This layer answers *what to make*:
