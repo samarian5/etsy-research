@@ -87,7 +87,8 @@ def mark_dispatched(slot: str) -> None:
         json.dump(state, fh)
 
 
-def dispatch(slots: list[str], pages: str, fast: str, profile: str) -> bool:
+def dispatch(slots: list[str], pages: str, fast: str, profile: str,
+             filter_mode: str = "none") -> bool:
     """One run, N shards.
 
     A matrix job starts N separate GitHub runners — separate IPs, separate
@@ -101,6 +102,9 @@ def dispatch(slots: list[str], pages: str, fast: str, profile: str) -> bool:
         "inputs": {
             "pages": pages, "fast": fast, "profile": profile,
             "shards": json.dumps(slots), "max_parallel": str(len(slots)),
+            # 'best' makes discovery use Etsy's bestseller filter, which is how the
+            # design method starts: collect proven sellers, not the whole market.
+            "filter": filter_mode,
         },
     })
     if out.get("error") or out.get("message"):
@@ -144,6 +148,8 @@ def main() -> int:
     ap.add_argument("--pages", default="2")
     ap.add_argument("--fast", default="false")
     ap.add_argument("--profile", default="warm")
+    ap.add_argument("--filter", dest="filter_mode", default="none", choices=["none", "best"],
+                   help="best = only Etsy's bestseller-filtered results")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--status", action="store_true")
     args = ap.parse_args()
@@ -156,7 +162,7 @@ def main() -> int:
         print(f"[dispatch] queue check failed ({type(e).__name__}) — dispatching w1 anyway")
         if args.status:
             return 0
-        return 0 if dispatch(["w1"], args.pages, args.fast, args.profile) else 1
+        return 0 if dispatch(["w1"], args.pages, args.fast, args.profile, filter_mode=args.filter_mode) else 1
 
     left = int(h.get("left") or 0)
     due = int(h.get("due_keywords") or 0)
@@ -202,7 +208,7 @@ def main() -> int:
         print(f"[dispatch] would run {want} shard(s): {free[:want]}")
         return 0
 
-    return 0 if dispatch(free[:want], args.pages, args.fast, args.profile) else 1
+    return 0 if dispatch(free[:want], args.pages, args.fast, args.profile, filter_mode=args.filter_mode) else 1
 
 
 if __name__ == "__main__":
