@@ -301,3 +301,34 @@ group by 1, 2;
 -- Indexes the views lean on.
 create index if not exists listings_listing_date_idx on public.listings (listing_date);
 create index if not exists listing_keywords_rank_idx  on public.listing_keywords (keyword, best_rank);
+
+-- ---------------------------------------------------------------------------
+-- 8. Access. Supabase grants anon everything on new public objects, and a view
+--    without security_invoker runs as its owner — which would hand these views
+--    to anyone holding the public anon key. Both must be fixed explicitly.
+-- ---------------------------------------------------------------------------
+alter view public.listing_stats      set (security_invoker = true);
+alter view public.age_cohorts        set (security_invoker = true);
+alter view public.new_winners        set (security_invoker = true);
+alter view public.shop_concentration set (security_invoker = true);
+alter view public.phrase_stats       set (security_invoker = true);
+alter view public.keyword_entry      set (security_invoker = true);
+alter view public.launch_curve       set (security_invoker = true);
+
+revoke all on public.listing_stats       from anon;
+revoke all on public.age_cohorts         from anon;
+revoke all on public.new_winners         from anon;
+revoke all on public.shop_concentration  from anon;
+revoke all on public.phrase_stats        from anon;
+revoke all on public.keyword_entry       from anon;
+revoke all on public.launch_curve        from anon;
+
+grant select on public.listing_stats       to authenticated;
+grant select on public.age_cohorts         to authenticated;
+grant select on public.new_winners         to authenticated;
+grant select on public.shop_concentration  to authenticated;
+grant select on public.phrase_stats        to authenticated;
+grant select on public.keyword_entry       to authenticated;
+grant select on public.launch_curve        to authenticated;
+
+notify pgrst, 'reload schema';
