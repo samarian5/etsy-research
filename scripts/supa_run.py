@@ -70,6 +70,7 @@ def crawl(slice_: dict, run_id: str, enrich: list[dict] | None = None) -> tuple[
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(enrich))
         cmd += ["--enrich-file", str(path)]
+    cmd += ["--filter", os.environ.get("CRAWL_FILTER", "none")]
 
     log(f"[slice] {keyword_label(kw)} pages {pf}-{pt} of {depth} (run {run_id})")
     rc = subprocess.call(cmd, cwd=str(ROOT))
