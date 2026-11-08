@@ -320,6 +320,77 @@
     </div>
   </section>
 
+  <!-- ── design library ─────────────────────────────────────────────────── -->
+  <section class="card-block" id="library" aria-labelledby="library-title">
+    <div class="block-head split">
+      <div>
+        <h2 id="library-title">Design library</h2>
+        <div class="title-row"><h3>Every design read off the artwork — phrase, composition, palette</h3></div>
+        <p class="block-sub">
+          The crawler stores what Etsy says about a listing. This panel reads the picture: the phrase
+          printed on the shirt (OCR), whether the design is text-only or text plus artwork, the
+          background treatment, and the dominant colours. Filter it, read the phrases, then make your
+          own version — inspiration, never a copy.
+        </p>
+      </div>
+      <div class="field">
+        <label for="lib-kw">Keyword</label>
+        <select id="lib-kw"></select>
+      </div>
+    </div>
+
+    <div class="toolbar lib-toolbar">
+      <div class="field">
+        <label for="lib-niche">Niche</label>
+        <select id="lib-niche"></select>
+      </div>
+      <div class="field">
+        <label for="lib-bg">Background</label>
+        <select id="lib-bg">
+          <option value="all">Any</option>
+          <option value="solid">Solid</option>
+          <option value="striped">Striped</option>
+          <option value="gradient">Gradient</option>
+          <option value="photo">Photo / mockup</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="lib-only">Show</label>
+        <select id="lib-only">
+          <option value="all">All designs</option>
+          <option value="text">With a readable phrase</option>
+          <option value="proven">Bestseller or star seller</option>
+        </select>
+      </div>
+      <button id="lib-csv" class="btn ghost" type="button">Download CSV</button>
+    </div>
+
+    <p class="note" id="lib-count">Loading the library…</p>
+    <div class="lib-grid" id="lib-grid"></div>
+
+    <h3 class="sub-head">Validated phrases</h3>
+    <p class="panel-sub">
+      The same words on more than one shirt. Several sellers arriving at the same phrase
+      independently is the closest thing to proof that an idea sells — this is the pattern half of
+      the research, before you reimagine it for your own niche.
+    </p>
+    <div class="table-wrap">
+      <table class="data compact">
+        <thead>
+          <tr>
+            <th scope="col">Phrase</th>
+            <th scope="col">Shirts</th>
+            <th scope="col">Shops</th>
+            <th scope="col">Demand</th>
+            <th scope="col">Niches it spans</th>
+            <th scope="col">Median price</th>
+          </tr>
+        </thead>
+        <tbody id="pat-body"></tbody>
+      </table>
+    </div>
+  </section>
+
   <!-- ── listings ──────────────────────────────────────────────────────── -->
   <section class="card-block" id="browse" aria-labelledby="browse-title">
     <div class="block-head">
