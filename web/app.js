@@ -1121,7 +1121,9 @@ function briefRow(r) {
     <td data-label="Top 10%">${num(r.p90_fav)}</td>
     <td data-label="Median price">${money(r.median_price)}</td>
     <td data-label="Shops">${num(r.shops)}</td>
-    <td data-label="New (90 d)">${r.pct_new == null ? '—' : `${Math.round(Number(r.pct_new))}%`}</td>
+    <td data-label="New (90 d)">${r.pct_new == null || Number(r.dated) < 0.3 * Number(r.listings)
+      ? '<span title="too few of this niche has a publish date yet">—</span>'
+      : `${Math.round(Number(r.pct_new))}%`}</td>
   </tr>`;
 }
 
