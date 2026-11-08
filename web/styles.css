@@ -683,3 +683,88 @@ body[data-locked="1"] #queue-body button[data-act="del"]::after { content: " �
   .card:hover { transform: none; }
   .card:hover .thumb img { transform: none; }
 }
+
+/* ── signals ────────────────────────────────────────────────────────────────
+   The strategic half of the board: is this market open, and what do the
+   listings that are winning look like. Same rules as everywhere else — numbers
+   carry the meaning, colour only reinforces it.
+   ──────────────────────────────────────────────────────────────────────────── */
+.block-head.split {
+  display: flex; gap: var(--s-5); justify-content: space-between;
+  align-items: flex-start; flex-wrap: wrap;
+}
+.block-head.split .field { min-width: 190px; }
+
+.sub-head {
+  font-size: var(--t-sm); font-weight: 650; letter-spacing: .01em;
+  color: var(--ink); margin: var(--s-6) 0 4px;
+}
+.signal-grid + .sub-head { margin-top: var(--s-7); }
+.panel-sub { font-size: var(--t-sm); line-height: 1.5; color: var(--muted); margin: 0 0 var(--s-3); max-width: 66ch; }
+
+.signal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-6); margin-top: var(--s-5); }
+.signal-grid > div { min-width: 0; }
+.signal-grid .sub-head { margin-top: var(--s-4); }
+
+/* entry score: a number you can compare down the column, not a gauge */
+.score { display: inline-flex; align-items: center; gap: 8px; min-width: 104px; justify-content: flex-end; }
+.score i {
+  position: relative; flex: 1; height: 6px; min-width: 52px; border-radius: 3px;
+  background: var(--surface-3); overflow: hidden;
+}
+.score i b { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--muted-2); }
+.score.high i b { background: var(--up); }
+.score.low i b { background: var(--warn); }
+.score .pct { font-variant-numeric: tabular-nums; font-size: var(--t-sm); min-width: 20px; text-align: right; }
+
+table.data tbody tr.focus-row td { background: color-mix(in oklab, var(--brand) 6%, transparent); }
+table.data.compact td { padding: 9px 12px; font-size: var(--t-sm); }
+
+/* launch curve: bars from a shared baseline, peak labelled */
+.curve {
+  display: flex; align-items: stretch; gap: 5px;
+  height: 156px; padding-top: 4px; border-bottom: 1px solid var(--line-strong);
+}
+.curve-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; align-items: center; }
+.curve-bar { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; }
+.curve-bar i {
+  display: block; width: 100%; max-width: 28px; border-radius: 4px 4px 0 0;
+  background: linear-gradient(var(--brand-soft), var(--brand));
+}
+.curve-val { font-size: 9.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.curve-week {
+  font-size: 9.5px; color: var(--muted-2); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 100%; padding-top: 3px;
+}
+
+/* fastest movers: a ranked list, because the order *is* the finding */
+.movers { list-style: none; margin: var(--s-2) 0 var(--s-2); padding: 0; border-top: 1px solid var(--line); }
+.mover {
+  display: grid; grid-template-columns: 26px 1fr auto; gap: var(--s-3);
+  align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line);
+}
+.mover .rank { font-size: var(--t-sm); color: var(--muted-2); text-align: right; font-variant-numeric: tabular-nums; }
+.mover-main { min-width: 0; }
+.mover-main a {
+  display: block; font-size: var(--t-base); font-weight: 550; color: var(--ink);
+  text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mover-main a:hover { text-decoration: underline; text-decoration-color: var(--brand); }
+.mover-meta { display: flex; flex-wrap: wrap; gap: 3px 12px; margin-top: 3px; font-size: var(--t-xs); color: var(--muted); }
+.mover-rate { text-align: right; }
+.mover-rate b { display: block; font-size: var(--t-md); color: var(--up); font-variant-numeric: tabular-nums; }
+.mover-rate span { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+
+@media (max-width: 860px) {
+  .signal-grid { grid-template-columns: 1fr; gap: var(--s-5); }
+  .signal-grid + .sub-head { margin-top: var(--s-6); }
+}
+@media (max-width: 640px) {
+  .block-head.split { gap: var(--s-3); }
+  .block-head.split .field { width: 100%; }
+  .mover { grid-template-columns: 22px 1fr; }
+  .mover-rate { grid-column: 2; text-align: left; display: flex; align-items: baseline; gap: 5px; }
+  .mover-rate b { font-size: var(--t-sm); }
+  .curve { height: 132px; }
+  .curve-week { font-size: 8.5px; }
+}
