@@ -2,5 +2,11 @@ fastapi>=0.115
 uvicorn[standard]>=0.30
 jinja2>=3.1
 beautifulsoup4>=4.12
+# Pin the selector engine. soupsieve 4.0.1 (pulled in by beautifulsoup4 4.15.0
+# on 2026-11-08) fails every `.select()` / `.select_one()` on a real Etsy page:
+# even a plain `.class` selector returns nothing, while find_all() still works.
+# That silently zeroed every field the parser reads and turned CI red. Keep 3.x
+# until 4.x is proven against tests/fixtures/detail_no_star.html.gz.
+soupsieve>=3.0,<4
 python-multipart>=0.0.9
 # crawler deps live in requirements-crawler.txt (installed on the Actions runner only)
