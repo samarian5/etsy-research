@@ -25,20 +25,26 @@ on:
         required: false
         default: "warm"
       worker:
-        description: "worker slot (w1..wN). Each slot has its own concurrency group, profile and identity"
+        description: "[deprecated] single worker slot; use shards"
         required: false
-        default: "w1"
+        default: ""
+      shards:
+        description: 'JSON array of slots to run in parallel, e.g. ["w1","w2","w3","w4"]'
+        required: false
+        default: '["w1","w2","w3"]'
+      max_parallel:
+        description: "how many of those shards may run at once (ramp control)"
+        required: false
+        default: "3"
 
 permissions:
   contents: read
 
-concurrency:
-  # One group PER WORKER SLOT — this is the whole trick. The queue is
-  # multi-consumer (claim_slice uses `for update skip locked`), so N slots may
-  # crawl at the same time; what must never happen is one slot overlapping
-  # itself. `inputs.worker` is empty on scheduled runs, hence the 'w1' default.
-  group: etsy-crawl-${{ inputs.worker || 'w1' }}
-  cancel-in-progress: false
+# No job-level concurrency here: the `slice` matrix below defines one group per
+# shard (concurrency is evaluated per matrix instance), which is exactly the
+# guarantee needed — a slot never overlaps itself, while different slots run in
+# parallel. The queue stays the coordinator: claim_slice() uses
+# `for update skip locked`, so two shards can never take the same keyword.
 
 jobs:
   # Cheap pre-flight. Boots no browser: it asks the database whether any keyword is
@@ -67,10 +73,22 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || needs.plan.outputs.due == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45       # a 2-page slice is 14-17 min; anything longer is stuck
+    # Shards: N independent workers inside one run. This is what actually scales
+    # throughput — extra repositories buy nothing (the runners share GitHub's IP
+    # ranges and the queue is already in Postgres), while a matrix buys N
+    # parallel jobs, N Chrome profiles and N concurrency groups for free.
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(inputs.max_parallel || '3') }}
+      matrix:
+        worker: ${{ fromJSON(inputs.shards || '["w1","w2","w3"]') }}
+    concurrency:
+      group: etsy-crawl-${{ matrix.worker }}
+      cancel-in-progress: false
     env:
       PYTHONUNBUFFERED: "1"
-      PROFILE_DIR: ${{ github.workspace }}/.etsy-profile-${{ inputs.worker || 'w1' }}
-      WORKER: ${{ inputs.worker || 'w1' }}
+      PROFILE_DIR: ${{ github.workspace }}/.etsy-profile-${{ matrix.worker }}
+      WORKER: ${{ matrix.worker }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       PAGES_PER_RUN: ${{ inputs.pages || '2' }}
@@ -124,9 +142,9 @@ jobs:
           path: ${{ env.PROFILE_DIR }}
           # Per-slot key: two workers must never share one browser identity, or
           # the same DataDome fingerprint starts arriving from two IPs at once.
-          key: etsy-supa-profile-${{ inputs.worker || 'w1' }}-v1-${{ github.run_id }}
+          key: etsy-supa-profile-${{ matrix.worker }}-v1-${{ github.run_id }}
           restore-keys: |
-            etsy-supa-profile-${{ inputs.worker || 'w1' }}-v1-
+            etsy-supa-profile-${{ matrix.worker }}-v1-
 
       - name: Run one slice
         id: slice
@@ -165,4 +183,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.PROFILE_DIR }}
-          key: etsy-supa-profile-${{ inputs.worker || 'w1' }}-v1-${{ github.run_id }}
+          key: etsy-supa-profile-${{ matrix.worker }}-v1-${{ github.run_id }}
