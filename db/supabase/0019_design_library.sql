@@ -103,7 +103,7 @@ select l.etsy_id, l.title, l.shop_name, l.price_usd, l.favorites, l.carts, l.bou
         + 15 * coalesce(l.carts, 0))::int                     as demand,
        case when l.listing_date is not null
             then (current_date - l.listing_date) end          as age_days,
-       n.niche, n.keyword
+       n.niche, coalesce(n.keyword, l.first_keyword) as keyword
   from public.listings l
   -- listing_niche_mv is per (keyword, listing); take the strongest niche so a
   -- shirt found under three keywords is still one design in the library.
