@@ -1262,7 +1262,55 @@ async function loadBriefs() {
   BRIEFS.examples = (examples.data || []).concat(cExamples);
   BRIEFS.production = (production.data || []).concat(cProduction);
   if (!cBriefs.length) console.warn('[briefs] phone-case briefs unavailable this load');
+  const kws = [...new Set(BRIEFS.rows.map((r) => r.keyword))];
+  if (!kws.length) {
+    $('brief-body').innerHTML = '<tr><td colspan="8" class="tiny">No niche data yet.</td></tr>';
+    return;
+  }
+  if (!kws.includes(BRIEFS.kw)) BRIEFS.kw = kws[0];
+  $('db-kw').innerHTML = kws
+    .map((k) => `<option value="${esc(k)}">${esc(k === '__cases' ? 'Phone cases (all)' : k)}</option>`)
+    .join('');
+  $('db-kw').value = BRIEFS.kw;
   renderBriefs();
+}
+
+function briefRow(r) {
+  const score = Math.max(0, Math.min(100, Math.round(Number(r.opportunity) || 0)));
+  const tone = score >= 60 ? ' high' : score <= 30 ? ' low' : '';
+  const sel = r.niche === BRIEFS.niche;
+  return `<tr class="${sel ? 'focus-row' : ''}" data-niche="${esc(r.niche)}" tabindex="0">
+    <td data-label="Niche"><b>${esc(r.label || r.niche)}</b>${r.note ? ` <span class="tag quiet">${esc(r.note)}</span>` : ''}</td>
+    <td data-label="Opportunity"><span class="score${tone}"><i><b style="width:${score}%"></b></i><span class="pct">${score}</span></span></td>
+    <td data-label="Listings">${num(r.listings)}</td>
+    <td data-label="Median favourites">${num(r.median_fav)}</td>
+    <td data-label="Top 10%">${num(r.p90_fav)}</td>
+    <td data-label="Median price">${money(r.median_price)}</td>
+    <td data-label="Shops">${num(r.shops)}</td>
+    <td data-label="New (90 d)">${r.pct_new == null || Number(r.dated) < 0.3 * Number(r.listings)
+      ? '<span title="too few of this niche has a publish date yet">—</span>'
+      : `${Math.round(Number(r.pct_new))}%`}</td>
+  </tr>`;
+}
+
+/* Etsy serves the original (2000 px) by default; the grid only needs a small one.
+ * The CDN accepts a resize segment in place of il_fullxfull, so ask for 570 px
+ * instead of downloading 2 MB of pixels per card. */
+const thumb = (url) => String(url || '').replace(/\/il_[^/.]+\./, '/il_570xN.');
+
+function designCard(e, i) {
+  const fav = Number(e.favorites) || 0;
+  return `<a class="design-card" href="https://www.etsy.com/listing/${esc(e.etsy_id)}" target="_blank" rel="noopener">
+    <span class="design-img"><img loading="lazy" src="${esc(thumb(e.image_url))}" alt=""></span>
+    <span class="design-meta">
+      <b>${num(fav)}</b><span>fav</span>
+      <span class="sep">·</span>
+      <span>${money(e.price_usd)}</span>
+      <span class="sep">·</span>
+      <span>#${i + 1}</span>
+    </span>
+    <span class="design-title">${esc(e.title || '')}</span>
+  </a>`;
 }
 
 function renderBriefs() {
