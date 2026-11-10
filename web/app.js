@@ -292,8 +292,14 @@ function startBoard() {
     ['listings', loadListings], ['stats', loadStats], ['queue', loadQueue], ['usage', loadUsage],
     ['market', loadMarket], ['signals', loadSignals], ['briefs', loadBriefs], ['library', loadLibrary],
   ];
-  board.forEach(([name, fn]) => {
-    fn().then(hideBanner).catch((e) => showBanner(`${name} failed to load: ${e.message} (build ${BUILD})`));
+  board.forEach(([name, fn], i) => {
+    // Twelve requests fired at once is enough to lose one on a cold connection.
+    // The two heaviest panels (briefs, library) start a beat later; everything
+    // else goes immediately, so the KPIs still paint on the first frame.
+    const delay = (name === 'briefs' || name === 'library') ? 350 : 0;
+    setTimeout(() => {
+      fn().then(hideBanner).catch((e) => showBanner(`${name} failed to load: ${e.message} (build ${BUILD})`));
+    }, delay);
   });
   loadRuns();
 }
@@ -1226,6 +1232,13 @@ function libCsv() {
 
 const BRIEFS = { kw: '__cases', rows: [], examples: [], production: [], niche: '' };
 
+// A request that is allowed to fail without taking the panel down with it.
+async function softRest(path) {
+  try { return (await rest(path)).data || []; }
+  catch (e) { await new Promise((r) => setTimeout(r, 800)); 
+    try { return (await rest(path)).data || []; } catch { return []; } }
+}
+
 async function loadBriefs() {
   const [briefs, examples, production, cBriefs, cExamples, cProduction] = await Promise.all([
     rest('design_briefs?select=*&order=opportunity.desc'),
@@ -1233,9 +1246,12 @@ async function loadBriefs() {
     rest('production_stats?select=*&order=listings.desc'),
     // Phone cases are a product of their own: different dictionary, different view,
     // same scoring. They ride the same table so the panel needs no second layout.
-    rest('case_briefs?select=*&order=opportunity.desc'),
-    rest('case_examples?select=*&limit=900'),
-    rest('case_production?select=*,pct_of_shirts:pct_of_cases&order=listings.desc'),
+    // The case panel is a bonus view: if one of its three requests loses a race with
+    // the dozen other calls the board makes on boot, the shirt briefs must still
+    // render. Fetch softly and retry the trio once before giving up.
+    softRest('case_briefs?select=*&order=opportunity.desc'),
+    softRest('case_examples?select=*&limit=900'),
+    softRest('case_production?select=*,pct_of_shirts:pct_of_cases&order=listings.desc'),
   ]);
   BRIEFS.rows = (briefs.data || []).concat(cBriefs.data || []);
   BRIEFS.examples = (examples.data || []).concat(cExamples.data || []);
