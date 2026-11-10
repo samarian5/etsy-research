@@ -108,7 +108,11 @@ _OCR = None
 
 JUNK = re.compile(
     r"(ships? from|unlimited proof|free shipping|personaliz|customi[sz]|size chart|add to cart"
-    r"|etsy|handmade|% off|\bsale\b|reviews?\b|fast shipping|made in|order now|click|swipe)", re.I)
+    r"|etsy|handmade|% off|\bsale\b|reviews?\b|fast shipping|made in|order now|click|swipe"
+    # phone-case mockups carry device furniture as the biggest "text" on the image:
+    # camera cut-outs, model names, material badges. None of it is a design phrase.
+    r"|camera|\biphone\b|\bsamsung\b|\bgalaxy\b|\bpixel\b|magsafe|shockproof|\btpu\b"
+    r"|silicone|\bcase\b|protective|\bpro max\b|\bplus\b|wireless charg)", re.I)
 
 
 def ocr(img: Image.Image) -> tuple[str, float]:
@@ -170,11 +174,14 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=40)
     ap.add_argument("--cool", type=int, default=30, help="minutes before a claim is released")
+    ap.add_argument("--scope", default=None,
+                    help="only read listings whose first_keyword matches this LIKE pattern, e.g. 'phone%'")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
     supa = Supa()
-    rows = supa._call("POST", "/rest/v1/rpc/claim_dna", {"p_limit": args.limit, "p_cool_minutes": args.cool})
+    rows = supa._call("POST", "/rest/v1/rpc/claim_dna",
+                      {"p_limit": args.limit, "p_cool_minutes": args.cool, "p_scope": args.scope})
     print(f"[dna] claimed {len(rows)} listings", flush=True)
 
     done = text_hits = 0
