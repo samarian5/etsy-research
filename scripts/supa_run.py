@@ -192,6 +192,10 @@ def main() -> int:
         try:
             out = supa._call("POST", "/rest/v1/rpc/refresh_design_views", {})
             log(f"[design] niche mapping refreshed: {out}")
+            # Phone cases read their own matview; refresh it on the same beat so a
+            # slice that only touched cases still updates the case panel.
+            out = supa._call("POST", "/rest/v1/rpc/refresh_case_views", {})
+            log(f"[cases] niche mapping refreshed: {out}")
         except Exception as e:                              # noqa: BLE001
             log(f"[design] refresh skipped: {type(e).__name__}: {e}")
 
