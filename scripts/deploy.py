@@ -54,6 +54,7 @@ FILES = [
     "db/supabase/0020_ingest_gallery.sql",
     "db/supabase/0021_case_briefs.sql",
     "db/supabase/0022_claim_dna_scope.sql",
+    "db/supabase/0023_case_niches_widen.sql",
     "docs/adr/0010-parallel-worker-pool.md",
     "README.md",
     "web/index.html",
