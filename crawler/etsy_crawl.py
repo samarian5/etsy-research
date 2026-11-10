@@ -531,17 +531,16 @@ def extract_detail(html: str, soup, url: str) -> dict:
             out["shop_review_count"] = parse_count(m.group(1))
 
     # Favorites fallback: the OpenGraph description states it when the listing has
-    # any ("... has 1,100 favorites from Etsy shoppers"). New listings omit the
-    # clause entirely, which means zero — not "unknown".
+    # any ("... has 1,100 favorites from Etsy shoppers"). When the clause is absent
+    # the count is UNKNOWN, not zero. Writing 0 here is what put 1,349 phone cases
+    # and 5,856 listings at "0 favourites", which drags every median towards zero and
+    # makes a niche look dead when the page simply did not print the number.
     if out["favorites"] is None and soup:
         og = soup.find("meta", attrs={"property": "og:description"})
         if og and og.get("content"):
             m = re.search(r"has\s+([\d.,]+[kKmM]?)\s+favorites", og["content"])
             if m:
                 out["favorites"] = parse_count(m.group(1))
-                ex["dom"] = True
-            elif "is sold by" in og["content"]:
-                out["favorites"] = 0
                 ex["dom"] = True
 
     # Price range / sale inference from the visible price block
