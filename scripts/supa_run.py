@@ -196,6 +196,8 @@ def main() -> int:
             # slice that only touched cases still updates the case panel.
             out = supa._call("POST", "/rest/v1/rpc/refresh_case_views", {})
             log(f"[cases] niche mapping refreshed: {out}")
+            out = supa._call("POST", "/rest/v1/rpc/refresh_signals_views", {})
+            log(f"[signals] matviews refreshed: {out}")
         except Exception as e:                              # noqa: BLE001
             log(f"[design] refresh skipped: {type(e).__name__}: {e}")
 
