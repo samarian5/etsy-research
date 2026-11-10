@@ -379,6 +379,43 @@ days but which already holds 1,000+ favourites with one reading — that is a re
 inheriting favourites, not demand measured over a day. 59 rows were set aside on the
 first run.
 
+## Phone cases — the current focus
+
+Phone cases are a *different market language* from shirts. Nobody buys a case because it
+says "dog mom"; they buy it because it says **cat**, **western**, **MagSafe**, and it fits
+an iPhone 16 Pro. So cases get their own dictionary, their own listings view and their own
+scored briefs (`0021_case_briefs.sql`), and none of the shirt numbers move.
+
+```
+keywords: phone case · iphone case · phone cover · aesthetic phone case · samsung galaxy case
+          custom phone case · iphone 16 case · leather phone case · clear phone case · cute phone case
+              │  depth 40–100, every 1–2 h, priority 80–100, 900 search pages/day
+              ▼
+case_listings      title must name a phone (iphone|samsung|galaxy|pixel|magsafe|phone case)
+              ▼
+case_niches        24 style niches: cat, dog, anime, custom/photo, floral, marble, animal print,
+                   retro, western, kawaii, coquette, gaming, music, sports, celestial, checkered,
+                   boho, halloween, christmas, pride, clear, magsafe, leather, minimal
+              ▼
+case_briefs        same opportunity formula and the same small-sample shrink as t-shirts
+              ▼
+case_examples      top 6 by favourites per niche · case_production  what they're made of
+```
+
+Two guards matter more on cases than on shirts:
+
+- **A stored favourite count of 0 is treated as unknown.** Etsy hides the count on plenty of
+  case pages; the crawler used to write `0` when the clause was missing, which put 1,349 cases
+  at "0 favourites" and dragged every niche median towards zero. The crawler now stores NULL,
+  and `case_stats` takes medians over known non-zero values while reporting `unknown_fav`.
+- **The artwork reader is aimed, not global.** `claim_dna(..., p_scope)` and
+  `design_dna.py --scope 'phone%%'` point the OCR/pixel pass at the case queue, and the junk
+  filter now drops device furniture — `CAMERA`, `iPhone`, `MagSafe`, `silicone`, `shockproof` —
+  because on a case mockup that is the largest text on the image and none of it is a design.
+
+The briefs panel defaults to **Phone cases (all)**; the shirt keywords stay one click away in
+the same dropdown, so the two markets remain comparable side by side.
+
 ## Runs every second day, unattended (legacy artifact path)
 
 `cron: "10 4 */2 * *"` in the workflow starts a refresh every second day at 04:10 UTC.
