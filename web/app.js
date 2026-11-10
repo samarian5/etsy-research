@@ -1224,24 +1224,29 @@ function libCsv() {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
-const BRIEFS = { kw: 'tshirt', rows: [], examples: [], production: [], niche: '' };
+const BRIEFS = { kw: '__cases', rows: [], examples: [], production: [], niche: '' };
 
 async function loadBriefs() {
-  const [briefs, examples, production] = await Promise.all([
+  const [briefs, examples, production, cBriefs, cExamples, cProduction] = await Promise.all([
     rest('design_briefs?select=*&order=opportunity.desc'),
     rest('niche_examples?select=*&limit=900'),
     rest('production_stats?select=*&order=listings.desc'),
+    // Phone cases are a product of their own: different dictionary, different view,
+    // same scoring. They ride the same table so the panel needs no second layout.
+    rest('case_briefs?select=*&order=opportunity.desc'),
+    rest('case_examples?select=*&limit=900'),
+    rest('case_production?select=*,pct_of_shirts:pct_of_cases&order=listings.desc'),
   ]);
-  BRIEFS.rows = briefs.data || [];
-  BRIEFS.examples = examples.data || [];
-  BRIEFS.production = production.data || [];
+  BRIEFS.rows = (briefs.data || []).concat(cBriefs.data || []);
+  BRIEFS.examples = (examples.data || []).concat(cExamples.data || []);
+  BRIEFS.production = (production.data || []).concat(cProduction.data || []);
   const kws = [...new Set(BRIEFS.rows.map((r) => r.keyword))];
   if (!kws.length) {
     $('brief-body').innerHTML = '<tr><td colspan="8" class="tiny">No niche data yet.</td></tr>';
     return;
   }
   if (!kws.includes(BRIEFS.kw)) BRIEFS.kw = kws[0];
-  $('db-kw').innerHTML = kws.map((k) => `<option value="${esc(k)}">${esc(k)}</option>`).join('');
+  $('db-kw').innerHTML = kws.map((k) => `<option value="${esc(k)}">${esc(k === '__cases' ? 'Phone cases (all)' : k)}</option>`).join('');
   $('db-kw').value = BRIEFS.kw;
   renderBriefs();
 }
