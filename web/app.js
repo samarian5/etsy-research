@@ -951,11 +951,11 @@ const perDay = (v) => (v === null || v === undefined ? '—'
 
 async function loadSignals() {
   const [entry, cohorts, winners, curve, phrases] = await Promise.all([
-    rest('keyword_entry?select=*&order=entry_score.desc'),
+    rest('keyword_entry_mv?select=*&order=entry_score.desc'),
     rest('age_cohorts?select=*'),
     rest('new_winners?select=keyword,etsy_id,title,shop_name,price_usd,favorites,age_days,fav_per_day,best_rank,is_ad,seller_reviews&order=fav_per_day.desc&limit=300'),
     rest('launch_curve?select=*&order=week.asc'),
-    rest('phrase_stats?select=*&order=median_favorites.desc&limit=800'),
+    rest('phrase_stats_mv?select=*&order=median_favorites.desc&limit=800'),
   ]);
   SIG.entry = entry.data || [];
   SIG.cohorts = cohorts.data || [];
