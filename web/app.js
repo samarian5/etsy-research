@@ -1233,76 +1233,36 @@ function libCsv() {
 const BRIEFS = { kw: '__cases', rows: [], examples: [], production: [], niche: '' };
 
 // A request that is allowed to fail without taking the panel down with it.
-async function softRest(path) {
-  try { return (await rest(path)).data || []; }
-  catch (e) { await new Promise((r) => setTimeout(r, 800)); 
-    try { return (await rest(path)).data || []; } catch { return []; } }
+async function softRest(path, tries = 1) {
+  let last;
+  for (let i = 0; i < tries; i++) {
+    try { return (await rest(path)).data || []; }
+    catch (e) { last = e; if (i < tries - 1) await new Promise((r) => setTimeout(r, 600 * (i + 1))); }
+  }
+  if (window.console) console.warn('[soft]', path.split('?')[0], last && last.message);
+  return [];
 }
 
 async function loadBriefs() {
-  const [briefs, examples, production, cBriefs, cExamples, cProduction] = await Promise.all([
+  // Two waves, not one. The shirt briefs are the panel's reason to exist, so they go
+  // first; the case trio follows in a second wave with retries. Firing all six at once
+  // on a cold connection lost a request often enough that the panel silently fell back
+  // to the shirt keywords.
+  const [briefs, examples, production] = await Promise.all([
     rest('design_briefs?select=*&order=opportunity.desc'),
     rest('niche_examples?select=*&limit=900'),
     rest('production_stats?select=*&order=listings.desc'),
-    // Phone cases are a product of their own: different dictionary, different view,
-    // same scoring. They ride the same table so the panel needs no second layout.
-    // The case panel is a bonus view: if one of its three requests loses a race with
-    // the dozen other calls the board makes on boot, the shirt briefs must still
-    // render. Fetch softly and retry the trio once before giving up.
-    softRest('case_briefs?select=*&order=opportunity.desc'),
-    softRest('case_examples?select=*&limit=900'),
-    softRest('case_production?select=*,pct_of_shirts:pct_of_cases&order=listings.desc'),
   ]);
-  BRIEFS.rows = (briefs.data || []).concat(cBriefs.data || []);
-  BRIEFS.examples = (examples.data || []).concat(cExamples.data || []);
-  BRIEFS.production = (production.data || []).concat(cProduction.data || []);
-  const kws = [...new Set(BRIEFS.rows.map((r) => r.keyword))];
-  if (!kws.length) {
-    $('brief-body').innerHTML = '<tr><td colspan="8" class="tiny">No niche data yet.</td></tr>';
-    return;
-  }
-  if (!kws.includes(BRIEFS.kw)) BRIEFS.kw = kws[0];
-  $('db-kw').innerHTML = kws.map((k) => `<option value="${esc(k)}">${esc(k === '__cases' ? 'Phone cases (all)' : k)}</option>`).join('');
-  $('db-kw').value = BRIEFS.kw;
+  const [cBriefs, cExamples, cProduction] = await Promise.all([
+    softRest('case_briefs?select=*&order=opportunity.desc', 3),
+    softRest('case_examples?select=*&limit=900', 3),
+    softRest('case_production?select=*,pct_of_shirts:pct_of_cases&order=listings.desc', 3),
+  ]);
+  BRIEFS.rows = (briefs.data || []).concat(cBriefs);
+  BRIEFS.examples = (examples.data || []).concat(cExamples);
+  BRIEFS.production = (production.data || []).concat(cProduction);
+  if (!cBriefs.length) console.warn('[briefs] phone-case briefs unavailable this load');
   renderBriefs();
-}
-
-function briefRow(r) {
-  const score = Math.max(0, Math.min(100, Math.round(Number(r.opportunity) || 0)));
-  const tone = score >= 60 ? ' high' : score <= 30 ? ' low' : '';
-  const sel = r.niche === BRIEFS.niche;
-  return `<tr class="${sel ? 'focus-row' : ''}" data-niche="${esc(r.niche)}" tabindex="0">
-    <td data-label="Niche"><b>${esc(r.label || r.niche)}</b>${r.note ? ` <span class="tag quiet">${esc(r.note)}</span>` : ''}</td>
-    <td data-label="Opportunity"><span class="score${tone}"><i><b style="width:${score}%"></b></i><span class="pct">${score}</span></span></td>
-    <td data-label="Listings">${num(r.listings)}</td>
-    <td data-label="Median favourites">${num(r.median_fav)}</td>
-    <td data-label="Top 10%">${num(r.p90_fav)}</td>
-    <td data-label="Median price">${money(r.median_price)}</td>
-    <td data-label="Shops">${num(r.shops)}</td>
-    <td data-label="New (90 d)">${r.pct_new == null || Number(r.dated) < 0.3 * Number(r.listings)
-      ? '<span title="too few of this niche has a publish date yet">—</span>'
-      : `${Math.round(Number(r.pct_new))}%`}</td>
-  </tr>`;
-}
-
-/* Etsy serves the original (2000 px) by default; the grid only needs a small one.
- * The CDN accepts a resize segment in place of il_fullxfull, so ask for 570 px
- * instead of downloading 2 MB of pixels per card. */
-const thumb = (url) => String(url || '').replace(/\/il_[^/.]+\./, '/il_570xN.');
-
-function designCard(e, i) {
-  const fav = Number(e.favorites) || 0;
-  return `<a class="design-card" href="https://www.etsy.com/listing/${esc(e.etsy_id)}" target="_blank" rel="noopener">
-    <span class="design-img"><img loading="lazy" src="${esc(thumb(e.image_url))}" alt=""></span>
-    <span class="design-meta">
-      <b>${num(fav)}</b><span>fav</span>
-      <span class="sep">·</span>
-      <span>${money(e.price_usd)}</span>
-      <span class="sep">·</span>
-      <span>#${i + 1}</span>
-    </span>
-    <span class="design-title">${esc(e.title || '')}</span>
-  </a>`;
 }
 
 function renderBriefs() {
