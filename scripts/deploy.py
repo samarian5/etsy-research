@@ -56,6 +56,7 @@ FILES = [
     "db/supabase/0022_claim_dna_scope.sql",
     "db/supabase/0023_case_niches_widen.sql",
     "db/supabase/0024_signals_matview.sql",
+    "db/supabase/0025_claim_dna_read_only_new.sql",
     "docs/adr/0010-parallel-worker-pool.md",
     "README.md",
     "web/index.html",
